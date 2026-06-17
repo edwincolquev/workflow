@@ -1,0 +1,487 @@
+# PROYECTO: PORTAL DE ANÁLISIS DE CADENA DE SUMINISTRO
+
+## Contexto General
+
+Somos una empresa importadora y distribuidora de repuestos automotrices con presencia nacional.
+
+Actualmente utilizamos SAP Business One como ERP principal y SQL Server como base de datos operativa.
+
+Durante los últimos años se desarrollaron diversos dashboards en Power BI para analizar diferentes áreas de la cadena de suministro.
+
+Los dashboards existentes son:
+
+1. Tránsitos
+2. Productos Nuevos
+3. Items Quebrados
+4. Discontinuados
+5. Inventarios (nuevo desarrollo)
+
+Cada dashboard utiliza consultas SQL complejas directamente sobre SAP Business One y contiene reglas de negocio específicas desarrolladas y validadas por los usuarios.
+
+El objetivo NO es reconstruir la lógica de negocio en Python.
+
+El objetivo es construir una plataforma unificada que reutilice las consultas SQL existentes y permita evolucionar más rápidamente que Power BI.
+
+---
+
+# Objetivo Estratégico
+
+Desarrollar un Portal de Análisis de Cadena de Suministro basado en Python y Streamlit que centralice todos los análisis operativos y gerenciales relacionados con:
+
+* Inventarios
+* Abastecimiento
+* Importaciones
+* Tránsitos
+* Quiebres
+* Productos nuevos
+* Discontinuados
+* Planificación futura
+
+La plataforma debe convertirse en la herramienta principal de seguimiento para:
+
+* Gerencia
+* Compras
+* Importaciones
+* Logística
+* Planificación de demanda
+
+---
+
+# Principios de Arquitectura
+
+## Regla fundamental
+
+La lógica de negocio debe permanecer en SQL Server.
+
+Python NO debe recalcular reglas de negocio complejas que ya existen en SQL.
+
+La arquitectura esperada es:
+
+SAP Business One
+→ SQL Server
+→ Consultas SQL
+→ Python / Pandas
+→ Streamlit
+→ Usuario Final
+
+---
+
+# Requerimientos Técnicos
+
+## Backend
+
+Python 3.12+
+
+## Framework
+
+Streamlit
+
+## Base de datos principal
+
+SQL Server
+
+## Base de datos auxiliar
+
+SQLite
+
+Utilizar SQLite únicamente para:
+
+* Comentarios
+* Configuración
+* Objetivos
+* Parámetros
+* Seguimiento
+* Auditoría
+
+No almacenar datos operativos de SAP en SQLite.
+
+---
+
+# Estructura del Proyecto
+
+Diseñar una estructura modular escalable.
+
+Ejemplo esperado:
+
+project/
+
+app.py
+
+config/
+database.py
+settings.py
+
+queries/
+dashboard.sql
+transitos.sql
+inventarios.sql
+quebrados.sql
+nuevos.sql
+discontinuados.sql
+
+services/
+data_loader.py
+cache_manager.py
+export_service.py
+
+pages/
+dashboard.py
+transitos.py
+inventarios.py
+quebrados.py
+nuevos.py
+discontinuados.py
+
+components/
+kpi_cards.py
+filters.py
+charts.py
+tables.py
+comments.py
+
+localdb/
+comments.db
+
+assets/
+
+---
+
+# Dashboard Ejecutivo (Página Principal)
+
+Esta será la primera pantalla que verá la gerencia.
+
+Debe mostrar una visión consolidada de la cadena de suministro.
+
+## KPIs principales
+
+* Inventario total
+* Capital inmovilizado
+* ICI (Índice de Calidad de Inventario)
+* Monto en tránsito
+* Cantidad de items quebrados
+* Capital en discontinuados
+* Productos nuevos activos
+* Fecha de actualización
+
+## Semáforos
+
+Inventario
+Tránsitos
+Quiebres
+Discontinuados
+
+Estados:
+
+* Verde
+* Amarillo
+* Rojo
+
+## Top 5 Marcas por Ventas
+
+Mostrar:
+
+* Participación
+* Inventario
+* Quiebres
+* ICI
+
+## Top 5 Problemas Críticos
+
+Ejemplos:
+
+* Marcas con exceso de inventario
+* Marcas con quiebres críticos
+* Tránsitos retrasados
+* Discontinuados elevados
+
+## Alertas Automáticas
+
+Generar insights automáticos.
+
+Ejemplos:
+
+"SKF incrementó 15% su sobrestock."
+
+"Bosch tiene 45 items quebrados."
+
+"Valeo presenta retrasos superiores a 20 días."
+
+---
+
+# Módulo 1: Tránsitos
+
+Ya existe un dashboard funcional en Power BI.
+
+La consulta SQL contiene:
+
+* Lead Time histórico
+* Lead Time calculado
+* Estado de flujo
+* Estado de retraso
+* Etapa funcional
+* Fecha estimada de llegada
+
+La consulta debe mantenerse como fuente maestra.
+
+No dividir la lógica en Python.
+
+## Pestañas
+
+### Resumen
+
+KPIs:
+
+* Monto en tránsito
+* Importaciones activas
+* Retrasos
+* Lead Time promedio
+
+### Detalle
+
+Tabla completa con filtros dinámicos.
+
+### Ingresados
+
+Mostrar únicamente importaciones completadas.
+
+---
+
+# Módulo 2: Inventarios
+
+Nuevo desarrollo.
+
+Objetivo:
+
+Medir la calidad del inventario y monitorear la reducción progresiva del sobrestock.
+
+## Métricas
+
+### Cobertura
+
+Inventario actual / Venta promedio mensual
+
+### Clasificación
+
+Quiebre
+Bajo
+Óptimo
+Alto
+Exceso
+
+### ICI
+
+Índice de Calidad de Inventario
+
+Escala 0 a 100.
+
+Debe ponderarse por importancia de ventas.
+
+### Capital inmovilizado
+
+Valor monetario asociado al exceso de inventario.
+
+### Quiebres
+
+Inventario insuficiente respecto a demanda.
+
+## Pestañas
+
+Resumen
+ICI
+Cobertura
+Excesos
+Quiebres
+Evolución
+
+---
+
+# Módulo 3: Items Quebrados
+
+Objetivo:
+
+Identificar pérdidas de venta por falta de stock.
+
+KPIs:
+
+* Cantidad de items quebrados
+* Ventas perdidas estimadas
+* Marcas afectadas
+* Tiempo promedio de quiebre
+
+---
+
+# Módulo 4: Productos Nuevos
+
+Objetivo:
+
+Evaluar desempeño de nuevos productos.
+
+KPIs:
+
+* Nuevos productos activos
+* Ventas acumuladas
+* Rotación
+* Cobertura
+
+Clasificación:
+
+* Exitosos
+* Normales
+* Sin movimiento
+
+---
+
+# Módulo 5: Discontinuados
+
+Objetivo:
+
+Liberar capital inmovilizado.
+
+KPIs:
+
+* Capital discontinuado
+* Cantidad de SKU
+* Meses sin venta
+* Participación sobre inventario total
+
+Clasificaciones:
+
+Activo
+Riesgo
+Discontinuado
+
+---
+
+# Sistema de Comentarios
+
+Implementar funcionalidad de comentarios asociada a:
+
+* Módulo
+* Marca
+* SKU
+* Importación
+
+Permitir:
+
+* Registrar comentario
+* Editar comentario
+* Historial de comentarios
+
+Ejemplo:
+
+"Proveedor confirmó embarque para el 15 de julio."
+
+"Reducir próxima compra 25%."
+
+---
+
+# Objetivos y Seguimiento
+
+Crear módulo para registrar:
+
+Objetivos mensuales.
+
+Ejemplo:
+
+* Reducir inventario 10%
+* Incrementar ICI a 75
+* Reducir quiebres 20%
+
+Mostrar avance contra objetivo.
+
+---
+
+# Exportaciones
+
+Permitir exportar:
+
+Excel
+CSV
+PDF
+
+Respetando filtros activos.
+
+---
+
+# Rendimiento
+
+Las consultas pueden retornar decenas o cientos de miles de registros.
+
+Implementar:
+
+* Caché
+* Lazy loading
+* Paginación
+* Optimización de consultas
+
+---
+
+# Seguridad
+
+Implementar:
+
+Login
+Roles
+
+Ejemplos:
+
+Gerencia
+Compras
+Importaciones
+Logística
+Administrador
+
+Cada rol puede acceder a módulos específicos.
+
+---
+
+# Roadmap Futuro
+
+La arquitectura debe prepararse para futuras funcionalidades:
+
+## Fase futura 1
+
+MRP
+
+* Stock actual
+* Tránsito
+* ETA
+* Pronóstico
+
+## Fase futura 2
+
+Simulador de compras
+
+Permitir:
+
+* Simular reducción de compras
+* Simular incremento de demanda
+* Simular retrasos
+
+## Fase futura 3
+
+IA
+
+Generación automática de insights.
+
+Detección de riesgos.
+
+Recomendaciones de abastecimiento.
+
+---
+
+# Entregables Esperados
+
+Solicito:
+
+1. Arquitectura técnica detallada.
+2. Diseño de base de datos.
+3. Diseño de navegación.
+4. Wireframes de las pantallas.
+5. Estructura de carpetas.
+6. Estrategia de conexión SQL Server.
+7. Estrategia de caché.
+8. Estrategia de autenticación.
+9. Código base del proyecto.
+10. Plan de implementación por fases.
+11. Recomendaciones de mejores prácticas para Streamlit empresarial.

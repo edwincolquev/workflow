@@ -25,9 +25,9 @@ def run_test():
             # Nodes
             # START -> TASK_1 (leads to TASK_2 and TASK_3 in parallel) -> END
             n_start = WorkflowNode(process_id=proc.id, name="Inicio", type="START")
-            n_task1 = WorkflowNode(process_id=proc.id, name="Etapa Tarea 1", type="TASK")
-            n_task2 = WorkflowNode(process_id=proc.id, name="Sub-Tarea A", type="TASK")
-            n_task3 = WorkflowNode(process_id=proc.id, name="Sub-Tarea B", type="TASK")
+            n_task1 = WorkflowNode(process_id=proc.id, name="Etapa Tarea 1", type="TASK", role_id=role.id)
+            n_task2 = WorkflowNode(process_id=proc.id, name="Sub-Tarea A", type="TASK", role_id=role.id)
+            n_task3 = WorkflowNode(process_id=proc.id, name="Sub-Tarea B", type="TASK", role_id=role.id)
             n_end = WorkflowNode(process_id=proc.id, name="Fin", type="END")
             
             db.add_all([n_start, n_task1, n_task2, n_task3, n_end])
@@ -36,28 +36,28 @@ def run_test():
             # Transitions
             # START -> TASK_1
             t_start = WorkflowTransition(
-                process_id=proc.id, source_node_id=n_start.id, role_id=role.id,
-                action_name="Auto-Iniciar", target_node_id=n_task1.id, target_role_id=role.id
+                process_id=proc.id, source_node_id=n_start.id,
+                action_name="Auto-Iniciar", target_node_id=n_task1.id
             )
             # TASK_1 -> TASK_2
             t_1_to_2 = WorkflowTransition(
-                process_id=proc.id, source_node_id=n_task1.id, role_id=role.id,
-                action_name="Avanzar A", target_node_id=n_task2.id, target_role_id=role.id
+                process_id=proc.id, source_node_id=n_task1.id,
+                action_name="Avanzar A", target_node_id=n_task2.id
             )
             # TASK_1 -> TASK_3
             t_1_to_3 = WorkflowTransition(
-                process_id=proc.id, source_node_id=n_task1.id, role_id=role.id,
-                action_name="Avanzar B", target_node_id=n_task3.id, target_role_id=role.id
+                process_id=proc.id, source_node_id=n_task1.id,
+                action_name="Avanzar B", target_node_id=n_task3.id
             )
             # TASK_2 -> END
             t_2_to_end = WorkflowTransition(
-                process_id=proc.id, source_node_id=n_task2.id, role_id=role.id,
-                action_name="Completar A", target_node_id=n_end.id, target_role_id=role.id
+                process_id=proc.id, source_node_id=n_task2.id,
+                action_name="Completar A", target_node_id=n_end.id
             )
             # TASK_3 -> END
             t_3_to_end = WorkflowTransition(
-                process_id=proc.id, source_node_id=n_task3.id, role_id=role.id,
-                action_name="Completar B", target_node_id=n_end.id, target_role_id=role.id
+                process_id=proc.id, source_node_id=n_task3.id,
+                action_name="Completar B", target_node_id=n_end.id
             )
             
             db.add_all([t_start, t_1_to_2, t_1_to_3, t_2_to_end, t_3_to_end])

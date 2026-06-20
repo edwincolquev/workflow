@@ -38,3 +38,36 @@ def init_db():
     # Dynamic imports of models to ensure they are registered in metadata
     import models
     Base.metadata.create_all(bind=engine)
+    
+    # Auto-migrations for SQLite to avoid dropping data
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        # 1. Add sla_hours to wf_node
+        try:
+            conn.execute(text("ALTER TABLE wf_node ADD COLUMN sla_hours INTEGER;"))
+        except Exception:
+            pass
+            
+        # 1b. Add role_id to wf_node
+        try:
+            conn.execute(text("ALTER TABLE wf_node ADD COLUMN role_id INTEGER REFERENCES wf_role(id) ON DELETE SET NULL;"))
+        except Exception:
+            pass
+            
+        # 2. Add docnum to wf_instance
+        try:
+            conn.execute(text("ALTER TABLE wf_instance ADD COLUMN docnum VARCHAR(50);"))
+        except Exception:
+            pass
+            
+        # 3. Add internal_code to wf_instance
+        try:
+            conn.execute(text("ALTER TABLE wf_instance ADD COLUMN internal_code VARCHAR(50);"))
+        except Exception:
+            pass
+        
+        # In SQLAlchemy 2.x, commit connection context to persist ALTER TABLE
+        try:
+            conn.commit()
+        except Exception:
+            pass

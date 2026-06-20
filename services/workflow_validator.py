@@ -120,9 +120,9 @@ class WorkflowValidatorService:
         if cannot_reach_end:
             errors.append(f"Los siguientes nodos están en un callejón sin salida (no pueden llegar a ningún nodo END): {', '.join(cannot_reach_end)}.")
 
-        # 4. Check that TASK and DECISION nodes have outgoing transitions
+        # 4. Check that TASK, DECISION and GATEWAY nodes have outgoing transitions
         for n in nodes:
-            if n.type in ['TASK', 'DECISION'] and n.id in visited_forward:
+            if n.type in ['TASK', 'DECISION', 'GATEWAY', 'NOTIFICATION'] and n.id in visited_forward:
                 if not adj[n.id]:
                     errors.append(f"El nodo '{n.name}' ({n.type}) no tiene transiciones salientes definidas.")
 

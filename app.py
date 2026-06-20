@@ -47,8 +47,10 @@ if "token" in st.query_params:
     
     # Lazy imports to avoid circular dependency
     from services.email_service import verify_task_token
-    from models import WorkflowTask, WorkflowInstance, WorkflowHistory
+    from models import WorkflowTask, WorkflowInstance, WorkflowHistory, WorkflowAttachment
     from engine import WorkflowEngine
+    import os
+    from datetime import datetime
     
     payload = verify_task_token(token)
     
@@ -57,7 +59,8 @@ if "token" in st.query_params:
         st.stop()
         
     task_id = payload["task_id"]
-    transition_id = payload["transition_id"]
+    transition_id_token = payload.get("transition_id")
+    action_name = payload.get("action_name")
     user_id = payload["user_id"]
     
     with get_db() as db:
@@ -108,8 +111,8 @@ if "token" in st.query_params:
                     st.rerun()
                 st.stop()
                 
-            # 2. If task is pending, execute the transition
-            from models import WorkflowUser
+            # 2. If task is pending, render landing page for confirmation
+            from models import WorkflowUser, WorkflowTransition
             user = db.query(WorkflowUser).filter(WorkflowUser.id == user_id).first()
             if not user:
                 st.error("❌ El usuario firmante del token no existe.")
@@ -120,35 +123,109 @@ if "token" in st.query_params:
                 st.error("❌ No tienes el rol requerido para procesar esta transición.")
                 st.stop()
                 
-            # Process transition
-            comment_text = comment_param.strip()
-            if not comment_text:
-                comment_text = "Completado directamente vía correo electrónico (Outlook)."
-            else:
-                comment_text = f"{comment_text} (Enviado vía correo electrónico)."
-                
-            WorkflowEngine.execute_transition(
-                db=db,
-                instance_id=task.instance_id,
-                transition_id=transition_id,
-                user_id=user.id,
-                comment_text=comment_text
-            )
+            # Dynamic Transition Resolution (Mid-flight Process Updates Resilience)
+            transition = None
+            if action_name:
+                transition = db.query(WorkflowTransition).filter(
+                    WorkflowTransition.process_id == task.instance.process_id,
+                    WorkflowTransition.source_node_id == task.node_id,
+                    WorkflowTransition.action_name == action_name
+                ).first()
             
-            st.balloons()
-            st.success(f"🎉 ¡Tarea procesada con éxito! La importación/ítem ha avanzado en el flujo operacional.")
-            st.info(f"""
-            **Resumen de la Transición:**
-            * **Flujo:** {task.instance.title}
-            * **Etapa Completada:** {task.node.name}
-            * **Comentario registrado:** "{comment_text}"
-            * **Ejecutado por:** {user.full_name}
-            """)
-            
-            if st.button("Ir al Portal"):
-                st.query_params.clear()
-                st.rerun()
+            if not transition and transition_id_token:
+                transition = db.query(WorkflowTransition).filter(WorkflowTransition.id == transition_id_token).first()
+                if transition and transition.source_node_id != task.node_id:
+                    transition = None
+                    
+            if not transition and task.node.type == 'TASK':
+                transition = db.query(WorkflowTransition).filter(
+                    WorkflowTransition.process_id == task.instance.process_id,
+                    WorkflowTransition.source_node_id == task.node_id
+                ).first()
                 
+            if not transition:
+                st.error("❌ Transición no válida para el estado actual de la tarea. La configuración del proceso puede haber cambiado.")
+                st.stop()
+                
+            st.markdown("<h2 class='main-header'>⚡ Confirmación de Aprobación vía Email</h2>", unsafe_allow_html=True)
+            st.markdown(f"##### Instancia: **{task.instance.title}**")
+            st.info(f"**Etapa Actual:** {task.node.name} | **Usuario:** {user.full_name} ({user.roles[0].name if user.roles else 'Sin Rol'})")
+            
+            # Form block
+            with st.form(key="email_landing_confirmation_form"):
+                comment_input = st.text_area(
+                    "Justificación / Comentario (Requerido):", 
+                    value=comment_param, 
+                    placeholder="Escriba obligatoriamente un comentario o justificación para el avance..."
+                )
+                
+                uploaded_file = st.file_uploader("Adjuntar archivo / documento (Opcional):", key="email_approval_uploader")
+                
+                submit_btn = st.form_submit_button("Confirmar y Avanzar Etapa", type="primary")
+                
+            if submit_btn:
+                if not comment_input.strip():
+                    st.error("❌ El comentario o justificación es obligatorio para avanzar la tarea.")
+                else:
+                    # Process transition
+                    comment_text = comment_input.strip() + " (Resolución vía email)"
+                    
+                    # Process attachment if uploaded
+                    if uploaded_file is not None:
+                        UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+                        timestamp_prefix = datetime.now().strftime("%Y%m%d%H%M%S")
+                        safe_filename = f"{timestamp_prefix}_{uploaded_file.name.replace(' ', '_')}"
+                        dest_path = os.path.join(UPLOAD_DIR, safe_filename)
+                        
+                        with open(dest_path, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+                            
+                        new_attach = WorkflowAttachment(
+                            instance_id=task.instance_id,
+                            task_id=task.id,   # Link to active task for forwarding
+                            user_id=user.id,
+                            file_name=uploaded_file.name,
+                            file_path=dest_path,  # Full absolute path
+                            file_size=uploaded_file.size,
+                            created_at=datetime.utcnow()
+                        )
+                        db.add(new_attach)
+                        
+                        history_file = WorkflowHistory(
+                            instance_id=task.instance_id,
+                            task_id=task.id,
+                            source_node_id=None,
+                            target_node_id=None,
+                            user_id=user.id,
+                            action='ATTACHMENT',
+                            comment=f"Archivo cargado vía email-landing: '{uploaded_file.name}'",
+                            timestamp=datetime.utcnow()
+                        )
+                        db.add(history_file)
+                        
+                    # Execute transition
+                    WorkflowEngine.execute_transition(
+                        db=db,
+                        instance_id=task.instance_id,
+                        transition_id=transition.id,
+                        user_id=user.id,
+                        comment_text=comment_text
+                    )
+                    
+                    st.balloons()
+                    st.success(f"🎉 ¡Tarea procesada con éxito! La importación/ítem ha avanzado en el flujo operacional.")
+                    st.info(f"""
+                    **Resumen de la Transición:**
+                    * **Flujo:** {task.instance.title}
+                    * **Etapa Completada:** {task.node.name}
+                    * **Comentario registrado:** "{comment_text}"
+                    * **Ejecutado por:** {user.full_name}
+                    """)
+                    
+                    if st.button("Ir al Portal"):
+                        st.query_params.clear()
+                        st.rerun()
+                        
         except Exception as ex:
             st.error(f"❌ Error al procesar la transición: {str(ex)}")
             

@@ -9,9 +9,12 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 class AttachmentsComponent:
     @staticmethod
-    def render_attachments_section(db: Session, instance_id: int, user_id: int):
+    def render_attachments_section(db: Session, instance_id: int, user_id: int, task_id: int = None):
         """
         Renders the attachment section, handles file uploads, and provides download options.
+        
+        Args:
+            task_id: If provided, newly uploaded attachments will be linked to this task (for forwarding).
         """
         st.markdown("<div class='section-header'>📎 Documentos Adjuntos</div>", unsafe_allow_html=True)
         
@@ -38,12 +41,13 @@ class AttachmentsComponent:
                 with open(dest_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 
-                # Add record to DB
+                # Add record to DB (store absolute path for reliable retrieval)
                 new_attach = WorkflowAttachment(
                     instance_id=instance_id,
+                    task_id=task_id,  # Links to the active task node if provided
                     user_id=user_id,
                     file_name=uploaded_file.name,
-                    file_path=safe_filename,  # Store relative to UPLOAD_DIR
+                    file_path=dest_path,  # Full absolute path
                     file_size=uploaded_file.size,
                     created_at=datetime.utcnow()
                 )
@@ -72,7 +76,11 @@ class AttachmentsComponent:
             st.info("No hay archivos adjuntos en este flujo.")
         else:
             for attach in attachments:
-                file_full_path = os.path.join(UPLOAD_DIR, attach.file_path)
+                # Support both absolute paths (new) and relative filenames (legacy)
+                if os.path.isabs(attach.file_path):
+                    file_full_path = attach.file_path
+                else:
+                    file_full_path = os.path.join(UPLOAD_DIR, attach.file_path)
                 
                 # Verify file exists on disk
                 if not os.path.exists(file_full_path):

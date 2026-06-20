@@ -1,0 +1,14 @@
+﻿Etapa Origen,Rol Autorizado,Acción (Nombre Botón),Etapa Destino,Rol Destino,ID
+Inicio,Administrador,Auto-Iniciar,OC Emitida,Compras,1
+OC Emitida,Compras,Enviar a Viaje Marítimo,Viaje Marítimo,Importaciones,2
+OC Emitida,Compras,Revisar y Observar OC,OC Emitida,Compras,3
+OC Emitida,Compras,Cancelar Importación,Ingresado,Administrador,4
+Viaje Marítimo,Importaciones,Llegada a Puerto (Aduana),Aduana,Logística,5
+Viaje Marítimo,Importaciones,Reportar Retraso Marítimo,Viaje Marítimo,Importaciones,6
+Aduana,Logística,Liberar Canal Verde,Transporte Local,Logística,7
+Aduana,Logística,Desviar a Canal Rojo,Canal Rojo,Logística,8
+Aduana,Logística,Devolver a Viaje (Falta Documentos),Viaje Marítimo,Importaciones,9
+Canal Rojo,Logística,Liberar de Canal Rojo,Transporte Local,Logística,10
+Canal Rojo,Logística,Devolver a Aduana (Ajustar Trámite),Aduana,Logística,11
+Transporte Local,Logística,Entregar Contenedor a Almacén,Almacén,Logística,12
+Almacén,Logística,Confirmar Ingreso a Stock,Ingresado,Gerencia,13

@@ -47,26 +47,25 @@ class WorkflowNode(Base):
     id = Column(Integer, primary_key=True)
     process_id = Column(Integer, ForeignKey('wf_process.id', ondelete='CASCADE'), nullable=False)
     name = Column(String(100), nullable=False)
-    type = Column(String(20), nullable=False)  # START, TASK, DECISION, END
+    type = Column(String(20), nullable=False)  # START, TASK, DECISION, GATEWAY, NOTIFICATION, END
     description = Column(Text, nullable=True)
+    sla_hours = Column(Integer, nullable=True)
+    role_id = Column(Integer, ForeignKey('wf_role.id', ondelete='SET NULL'), nullable=True)
 
     process = relationship('WorkflowProcess', back_populates='nodes')
+    role = relationship('WorkflowRole')
 
 class WorkflowTransition(Base):
     __tablename__ = 'wf_transition'
     id = Column(Integer, primary_key=True)
     process_id = Column(Integer, ForeignKey('wf_process.id', ondelete='CASCADE'), nullable=False)
     source_node_id = Column(Integer, ForeignKey('wf_node.id', ondelete='CASCADE'), nullable=False)
-    role_id = Column(Integer, ForeignKey('wf_role.id', ondelete='CASCADE'), nullable=False)
     action_name = Column(String(100), nullable=False)
     target_node_id = Column(Integer, ForeignKey('wf_node.id', ondelete='CASCADE'), nullable=False)
-    target_role_id = Column(Integer, ForeignKey('wf_role.id', ondelete='CASCADE'), nullable=True) # Role that gets the resulting task
 
     process = relationship('WorkflowProcess', back_populates='transitions')
     source_node = relationship('WorkflowNode', foreign_keys=[source_node_id])
     target_node = relationship('WorkflowNode', foreign_keys=[target_node_id])
-    role = relationship('WorkflowRole', foreign_keys=[role_id])
-    target_role = relationship('WorkflowRole', foreign_keys=[target_role_id])
 
 class WorkflowInstance(Base):
     __tablename__ = 'wf_instance'
@@ -76,6 +75,8 @@ class WorkflowInstance(Base):
     status = Column(String(20), default='ACTIVE')  # ACTIVE, COMPLETED, CANCELLED
     current_node_id = Column(Integer, ForeignKey('wf_node.id'), nullable=True)
     external_ref = Column(String(100), nullable=True) # e.g. 'DocNum:10045' or 'ItemCode:XYZ'
+    docnum = Column(String(50), nullable=True)
+    internal_code = Column(String(50), unique=True, nullable=True)
     created_by_id = Column(Integer, ForeignKey('wf_user.id'), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

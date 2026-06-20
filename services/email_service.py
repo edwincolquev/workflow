@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 import streamlit as st
 import pandas as pd
 
-from models import WorkflowUser, WorkflowTask, WorkflowTransition, WorkflowInstance
+from models import WorkflowUser, WorkflowTask, WorkflowTransition, WorkflowInstance, WorkflowNode
 from services.data_loader import DataLoaderService
 from services.export_service import ExportService
 
@@ -33,12 +33,13 @@ try:
 except:
     pass
 
-def generate_task_token(task_id: int, transition_id: int, user_id: int, ttl_hours: int = 48) -> str:
+def generate_task_token(task_id: int, transition_id: int, user_id: int, action_name: str = None, ttl_hours: int = 48) -> str:
     """Generates a base64 encoded and HMAC signed token containing workflow task details."""
     expiration = int(time.time()) + (ttl_hours * 3600)
     payload = {
         "task_id": task_id,
         "transition_id": transition_id,
+        "action_name": action_name,
         "user_id": user_id,
         "exp": expiration
     }
@@ -75,8 +76,19 @@ def verify_task_token(token: str) -> dict:
     except Exception:
         return None
 
-def send_task_notification_email(db: Session, task: WorkflowTask):
-    """Generates and sends an approval request email to all active users with the task's assigned role."""
+def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: str = None, from_attachments: list = None):
+    """
+    Sends a task notification email to all users with the task's assigned role.
+    
+    Args:
+        db: Database session.
+        task: The newly created WorkflowTask to notify about.
+        from_comment: Comment/observation written by the user at the PREVIOUS node.
+        from_attachments: List of WorkflowAttachment objects uploaded at the PREVIOUS node.
+    """
+    if from_attachments is None:
+        from_attachments = []
+
     role = task.assigned_role
     users = db.query(WorkflowUser).filter(
         WorkflowUser.active == True,
@@ -89,18 +101,47 @@ def send_task_notification_email(db: Session, task: WorkflowTask):
     inst = task.instance
     proc_name = inst.process.name
     task_name = task.node.name
+    node_description = task.node.description or ""
     
-    # Fetch transitions available from this node for this role
+    # Fetch transitions available from this node
     transitions = db.query(WorkflowTransition).filter(
         WorkflowTransition.process_id == inst.process_id,
-        WorkflowTransition.source_node_id == inst.current_node_id,
-        WorkflowTransition.role_id == role.id
+        WorkflowTransition.source_node_id == task.node_id
     ).all()
     
     if not transitions:
         return
 
-    # Check and generate SQL report PDF if applicable
+    # ── Build node description block (task instructions) ─────────────────────
+    node_instructions_html = ""
+    if node_description.strip():
+        node_instructions_html = f"""
+        <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 14px; margin: 15px 0; border-radius: 0 6px 6px 0;">
+            <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: bold; color: #1d4ed8; text-transform: uppercase; letter-spacing: 0.5px;">📋 Instrucciones de la Tarea</p>
+            <p style="margin: 0; font-size: 13px; color: #1e3a5f; line-height: 1.5;">{node_description}</p>
+        </div>"""
+
+    # ── Build previous node context block ──────────────────────────────────────
+    prev_context_html = ""
+    if from_comment and from_comment.strip():
+        attachment_list_html = ""
+        if from_attachments:
+            items = "".join(
+                f"<li style='font-size:12px;color:#374151;'>📎 {a.file_name}</li>"
+                for a in from_attachments
+            )
+            attachment_list_html = f"""
+            <p style="margin: 8px 0 2px 0; font-size: 12px; font-weight: bold; color: #4b5563;">Archivos adjuntos del nodo anterior:</p>
+            <ul style="margin: 0; padding-left: 18px;">{items}</ul>"""
+
+        prev_context_html = f"""
+        <div style="background-color: #f0fdf4; border-left: 4px solid #10b981; padding: 12px 14px; margin: 15px 0; border-radius: 0 6px 6px 0;">
+            <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: bold; color: #065f46; text-transform: uppercase; letter-spacing: 0.5px;">💬 Contexto del Nodo Anterior</p>
+            <p style="margin: 0; font-size: 13px; color: #1f2937; line-height: 1.5; font-style: italic;">"{from_comment.strip()}"</p>
+            {attachment_list_html}
+        </div>"""
+
+    # ── Check and generate SQL report PDF if applicable ────────────────────────
     pdf_data = None
     pdf_filename = None
     if inst.external_ref:
@@ -130,7 +171,7 @@ def send_task_notification_email(db: Session, task: WorkflowTask):
         except Exception as ex:
             print(f"Error generating automatic PDF attachment: {str(ex)}")
 
-    # Base URL configuration
+    # ── Base URL configuration ─────────────────────────────────────────────────
     base_url = "http://localhost:8501"
     try:
         sec = None
@@ -150,23 +191,20 @@ def send_task_notification_email(db: Session, task: WorkflowTask):
         if not user.email:
             continue
             
-        # Option 1: Comments HTML Form (using GET mapping to streamlit app)
+        # ── Option 1: Action form (approval with comment) ──────────────────────
         form_actions_html = f"""
         <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-top: 15px; margin-bottom: 15px;">
             <form action="{base_url}/" method="get">
                 <div style="margin-bottom: 12px;">
                     <label for="comment" style="display: block; font-family: sans-serif; font-size: 13px; font-weight: bold; color: #1e293b; margin-bottom: 6px;">
-                        Escribe tus comentarios u observaciones (Opcional):
+                        Escribe tus comentarios u observaciones (Requerido):
                     </label>
-                    <textarea id="comment" name="comment" rows="3" style="width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-family: sans-serif; font-size: 13px; resize: vertical;" placeholder="Ingresa detalles sobre esta resolución..."></textarea>
+                    <textarea id="comment" name="comment" rows="3" required style="width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-family: sans-serif; font-size: 13px; resize: vertical;" placeholder="Ingresa detalles obligatorios sobre esta resolución..."></textarea>
                 </div>
                 <div style="margin-top: 10px;">
         """
         
-        # Option 2: Fallback Quick Links
-        fallback_links_html = ""
-        
-        # Determine transitions to show in email
+        # Determine transitions to show
         is_task_node = (task.node.type == 'TASK')
         transitions_to_show = []
         if is_task_node and transitions:
@@ -178,21 +216,11 @@ def send_task_notification_email(db: Session, task: WorkflowTask):
                 transitions_to_show.append((t, t.action_name))
                 
         for trans, action_display in transitions_to_show:
-            token = generate_task_token(task.id, trans.id, user.id)
-            
-            # Form button inside the form
+            token = generate_task_token(task.id, trans.id, user.id, action_name=trans.action_name)
             form_actions_html += f"""
             <button type="submit" name="token" value="{token}" style="display: inline-block; padding: 8px 16px; font-family: sans-serif; font-size: 13px; font-weight: bold; color: white; background-color: #3b82f6; border: none; border-radius: 5px; margin-right: 8px; margin-bottom: 8px; cursor: pointer;">
                 {action_display}
             </button>
-            """
-            
-            # Fallback plain <a> links
-            action_url = f"{base_url}/?token={token}"
-            fallback_links_html += f"""
-            <a href="{action_url}" style="display: inline-block; padding: 8px 16px; font-family: sans-serif; font-size: 13px; font-weight: bold; color: white; background-color: #10b981; text-decoration: none; border-radius: 5px; margin-right: 8px; margin-bottom: 8px;">
-                {action_display} (Rápido)
-            </a>
             """
             
         form_actions_html += """
@@ -201,12 +229,19 @@ def send_task_notification_email(db: Session, task: WorkflowTask):
         </div>
         """
         
+        # ── Count forwarded attachments for footer note ────────────────────────
+        fwd_att_note = ""
+        if from_attachments:
+            count = len(from_attachments)
+            fwd_att_note = f"<p style='font-size: 12px; color: #475569;'>📎 Se adjuntan <b>{count}</b> archivo(s) del nodo anterior junto con este correo.</p>"
+
+        # ── Build full HTML email ──────────────────────────────────────────────
         html_content = f"""
         <html>
           <body style="font-family: Arial, sans-serif; color: #334155; line-height: 1.6; background-color: #f1f5f9; padding: 20px;">
-            <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 25px; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+            <div style="max-width: 620px; margin: 0 auto; background-color: white; padding: 25px; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
               <div style="border-bottom: 2px solid #3b82f6; padding-bottom: 12px; margin-bottom: 15px;">
-                  <h2 style="color: #0f172a; margin: 0; font-size: 18px;">⚙️ ACCIÓN REQUERIDA: Aprobación de Flujo</h2>
+                  <h2 style="color: #0f172a; margin: 0; font-size: 18px;">⚙️ ACCIÓN REQUERIDA: Tarea Asignada</h2>
                   <p style="margin: 3px 0 0 0; color: #64748b; font-size: 13px;">Proceso: <b>{proc_name}</b></p>
               </div>
               
@@ -216,35 +251,37 @@ def send_task_notification_email(db: Session, task: WorkflowTask):
               <div style="background-color: #f8fafc; border-left: 4px solid #3b82f6; padding: 12px; margin: 15px 0; border-radius: 0 6px 6px 0;">
                   <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
                       <tr>
-                          <td style="padding: 3px 0; color: #64748b; width: 120px;"><b>Instancia:</b></td>
+                          <td style="padding: 3px 0; color: #64748b; width: 130px;"><b>Instancia:</b></td>
                           <td style="padding: 3px 0; color: #0f172a; font-weight: bold;">{inst.title}</td>
                       </tr>
                       <tr>
-                          <td style="padding: 3px 0; color: #64748b;"><b>Etapa Actual:</b></td>
+                          <td style="padding: 3px 0; color: #64748b;"><b>Código:</b></td>
+                          <td style="padding: 3px 0; color: #0f172a;">{inst.internal_code or f'#{inst.id}'}</td>
+                      </tr>
+                      <tr>
+                          <td style="padding: 3px 0; color: #64748b;"><b>Etapa Asignada:</b></td>
                           <td style="padding: 3px 0; color: #0f172a;"><span style="background-color: #fef3c7; color: #d97706; padding: 1px 6px; border-radius: 4px; font-weight: bold; font-size: 11px;">{task_name}</span></td>
                       </tr>
                       <tr>
-                          <td style="padding: 3px 0; color: #64748b;"><b>Referencia ERP:</b></td>
-                          <td style="padding: 3px 0; color: #0f172a;"><code>{inst.external_ref or 'Ninguna'}</code></td>
+                          <td style="padding: 3px 0; color: #64748b;"><b>DocNum:</b></td>
+                          <td style="padding: 3px 0; color: #0f172a;"><code>{inst.docnum or 'N/A'}</code></td>
                       </tr>
                       <tr>
-                          <td style="padding: 3px 0; color: #64748b;"><b>Asignado a:</b></td>
-                          <td style="padding: 3px 0; color: #0f172a;">Rol {role.name}</td>
+                          <td style="padding: 3px 0; color: #64748b;"><b>Rol Asignado:</b></td>
+                          <td style="padding: 3px 0; color: #0f172a;">{role.name}</td>
                       </tr>
                   </table>
               </div>
+
+              {node_instructions_html}
+              {prev_context_html}
               
-              <p style="font-weight: bold; color: #0f172a; margin-top: 20px; margin-bottom: 5px;">Opción 1: Responder con Comentario (Recomendado)</p>
-              <p style="font-size: 12px; color: #64748b; margin-top: 0; margin-bottom: 8px;">Completa la justificación y haz clic en el botón de la acción correspondiente:</p>
+              <p style="font-weight: bold; color: #0f172a; margin-top: 20px; margin-bottom: 5px;">Resolución con Comentario Requerido</p>
+              <p style="font-size: 12px; color: #64748b; margin-top: 0; margin-bottom: 8px;">Completa la justificación (campo obligatorio) y haz clic en el botón de la acción correspondiente:</p>
               {form_actions_html}
               
-              <p style="font-weight: bold; color: #0f172a; margin-top: 20px; margin-bottom: 5px;">Opción 2: Aprobación Rápida (Sin Comentarios)</p>
-              <p style="font-size: 12px; color: #64748b; margin-top: 0; margin-bottom: 8px;">Usa estos enlaces alternativos si tu cliente de correo no permite formularios:</p>
-              <div style="margin-top: 5px; margin-bottom: 20px;">
-                  {fallback_links_html}
-              </div>
-              
-              {f"<p style='font-size: 12px; color: #475569;'>📎 Se adjunta el informe SQL/PDF con los datos operacionales asociados a esta importación/artículo.</p>" if pdf_data else ""}
+              {f"<p style='font-size: 12px; color: #475569;'>📎 Se adjunta el informe de datos operacionales.</p>" if pdf_data else ""}
+              {fwd_att_note}
               
               <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0 15px 0;">
               <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">
@@ -255,19 +292,231 @@ def send_task_notification_email(db: Session, task: WorkflowTask):
         </html>
         """
         
-        attachments = []
+        # ── Assemble email attachments ─────────────────────────────────────────
+        email_attachments = []
+        
+        # 1. PDF report (if applicable)
         if pdf_data:
-            attachments.append({
+            email_attachments.append({
+                "data": pdf_data,
+                "filename": pdf_filename,
+                "mime_type": "application/pdf"
+            })
+        
+        # 2. Forwarded attachments from the previous node (read from disk)
+        for att in from_attachments:
+            try:
+                if os.path.exists(att.file_path):
+                    with open(att.file_path, 'rb') as f:
+                        file_bytes = f.read()
+                    # Infer MIME type from extension
+                    ext = os.path.splitext(att.file_name)[1].lower()
+                    mime_map = {
+                        '.pdf': 'application/pdf',
+                        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        '.xls': 'application/vnd.ms-excel',
+                        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        '.doc': 'application/msword',
+                        '.png': 'image/png',
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.zip': 'application/zip',
+                        '.csv': 'text/csv',
+                    }
+                    mime_type = mime_map.get(ext, 'application/octet-stream')
+                    email_attachments.append({
+                        "data": file_bytes,
+                        "filename": att.file_name,
+                        "mime_type": mime_type
+                    })
+            except Exception as ex:
+                print(f"Could not attach forwarded file '{att.file_name}': {ex}")
+            
+        send_email_with_attachments(
+            to_email=user.email,
+            subject=f"⚙️ TAREA ASIGNADA: '{task_name}' en {inst.internal_code or inst.title}",
+            html_content=html_content,
+            attachments=email_attachments
+        )
+
+def send_info_notification_email(db: Session, instance: WorkflowInstance, node: WorkflowNode, from_comment: str = None, from_attachments: list = None):
+    """
+    Sends an informational email notification to all active users with the node's assigned role.
+    No buttons/actions are included.
+    """
+    if from_attachments is None:
+        from_attachments = []
+    
+    role = node.role
+    if not role:
+        return
+        
+    users = db.query(WorkflowUser).filter(
+        WorkflowUser.active == True,
+        WorkflowUser.roles.any(id=role.id)
+    ).all()
+    
+    if not users:
+        return
+        
+    proc_name = instance.process.name
+    node_name = node.name
+    node_description = node.description or ""
+    
+    # Node description
+    node_instructions_html = ""
+    if node_description.strip():
+        node_instructions_html = f"""
+        <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 14px; margin: 15px 0; border-radius: 0 6px 6px 0;">
+            <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: bold; color: #1d4ed8; text-transform: uppercase; letter-spacing: 0.5px;">📋 Detalle de la Notificación</p>
+            <p style="margin: 0; font-size: 13px; color: #1e3a5f; line-height: 1.5;">{node_description}</p>
+        </div>"""
+        
+    # Previous node context block
+    prev_context_html = ""
+    if from_comment and from_comment.strip():
+        attachment_list_html = ""
+        if from_attachments:
+            items = "".join(
+                f"<li style='font-size:12px;color:#374151;'>📎 {a.file_name}</li>"
+                for a in from_attachments
+            )
+            attachment_list_html = f"""
+            <p style="margin: 8px 0 2px 0; font-size: 12px; font-weight: bold; color: #4b5563;">Archivos adjuntos:</p>
+            <ul style="margin: 0; padding-left: 18px;">{items}</ul>"""
+
+        prev_context_html = f"""
+        <div style="background-color: #f0fdf4; border-left: 4px solid #10b981; padding: 12px 14px; margin: 15px 0; border-radius: 0 6px 6px 0;">
+            <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: bold; color: #065f46; text-transform: uppercase; letter-spacing: 0.5px;">💬 Comentarios del Nodo Anterior</p>
+            <p style="margin: 0; font-size: 13px; color: #1f2937; line-height: 1.5; font-style: italic;">"{from_comment.strip()}"</p>
+            {attachment_list_html}
+        </div>"""
+
+    # Check and generate SQL report PDF if applicable
+    pdf_data = None
+    pdf_filename = None
+    if instance.external_ref:
+        try:
+            if instance.external_ref.startswith("DocNum:"):
+                doc_num = int(instance.external_ref.split(":")[1])
+                df, _ = DataLoaderService.get_transitos_with_workflow(db)
+                df_filtered = df[df['DocNum'] == doc_num]
+                if not df_filtered.empty:
+                    pdf_filename = f"Reporte_Transito_{doc_num}.pdf"
+                    pdf_data = ExportService.to_pdf(
+                        title=f"Reporte de Tránsito - OC {doc_num}",
+                        subtitle=f"Proveedor: {df_filtered.iloc[0].get('Nombre Proveedor', '')} - Fabricante: {df_filtered.iloc[0].get('Fabricante', '')}",
+                        df=df_filtered
+                    )
+            elif instance.external_ref.startswith("ItemCode:"):
+                item_code = instance.external_ref.split(":")[1]
+                df, _ = DataLoaderService.get_nuevos_with_workflow(db)
+                df_filtered = df[df['ItemCode'] == item_code]
+                if not df_filtered.empty:
+                    pdf_filename = f"Ficha_Tecnica_{item_code}.pdf"
+                    pdf_data = ExportService.to_pdf(
+                        title=f"Ficha de Artículo Nuevo - {item_code}",
+                        subtitle=f"Descripción: {df_filtered.iloc[0].get('ItemName', '')} - Fabricante: {df_filtered.iloc[0].get('Fabricante', '')}",
+                        df=df_filtered
+                    )
+        except Exception as ex:
+            print(f"Error generating automatic PDF attachment in notification: {str(ex)}")
+
+    for user in users:
+        if not user.email:
+            continue
+            
+        html_content = f"""
+        <html>
+          <body style="font-family: Arial, sans-serif; color: #334155; line-height: 1.6; background-color: #f1f5f9; padding: 20px;">
+            <div style="max-width: 620px; margin: 0 auto; background-color: white; padding: 25px; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+              <div style="border-bottom: 2px solid #3b82f6; padding-bottom: 12px; margin-bottom: 15px;">
+                  <h2 style="color: #1e3a8a; margin: 0; font-size: 18px;">📢 NOTIFICACIÓN INFORMATIVA</h2>
+                  <p style="margin: 3px 0 0 0; color: #64748b; font-size: 13px;">Proceso: <b>{proc_name}</b></p>
+              </div>
+              
+              <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 10px; margin-bottom: 15px; font-weight: bold; color: #1e40af; font-size: 13px; text-align: center;">
+                  Esta es una notificación informativa. No se requiere ninguna acción de su parte.
+              </div>
+              
+              <p>Hola <b>{user.full_name}</b>,</p>
+              <p>Se ha registrado un hito o cambio de estado en el flujo de trabajo:</p>
+              
+              <div style="background-color: #f8fafc; border-left: 4px solid #3b82f6; padding: 12px; margin: 15px 0; border-radius: 0 6px 6px 0;">
+                  <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                      <tr>
+                          <td style="padding: 3px 0; color: #64748b; width: 130px;"><b>Instancia:</b></td>
+                          <td style="padding: 3px 0; color: #0f172a; font-weight: bold;">{instance.title}</td>
+                      </tr>
+                      <tr>
+                          <td style="padding: 3px 0; color: #64748b;"><b>Código:</b></td>
+                          <td style="padding: 3px 0; color: #0f172a;">{instance.internal_code or f'#{instance.id}'}</td>
+                      </tr>
+                      <tr>
+                          <td style="padding: 3px 0; color: #64748b;"><b>Etapa/Evento:</b></td>
+                          <td style="padding: 3px 0; color: #0f172a;"><span style="background-color: #dbeafe; color: #1e40af; padding: 1px 6px; border-radius: 4px; font-weight: bold; font-size: 11px;">{node_name}</span></td>
+                      </tr>
+                      <tr>
+                          <td style="padding: 3px 0; color: #64748b;"><b>DocNum:</b></td>
+                          <td style="padding: 3px 0; color: #0f172a;"><code>{instance.docnum or 'N/A'}</code></td>
+                      </tr>
+                  </table>
+              </div>
+
+              {node_instructions_html}
+              {prev_context_html}
+              
+              {f"<p style='font-size: 12px; color: #475569;'>📎 Se adjunta el informe de datos operacionales.</p>" if pdf_data else ""}
+              
+              <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0 15px 0;">
+              <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">
+                  Este es un correo automático del Portal de Control Operacional. No responda a este mensaje.
+              </p>
+            </div>
+          </body>
+        </html>
+        """
+        
+        email_attachments = []
+        if pdf_data:
+            email_attachments.append({
                 "data": pdf_data,
                 "filename": pdf_filename,
                 "mime_type": "application/pdf"
             })
             
+        for att in from_attachments:
+            try:
+                if os.path.exists(att.file_path):
+                    with open(att.file_path, 'rb') as f:
+                        file_bytes = f.read()
+                    ext = os.path.splitext(att.file_name)[1].lower()
+                    mime_map = {
+                        '.pdf': 'application/pdf',
+                        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        '.xls': 'application/vnd.ms-excel',
+                        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        '.doc': 'application/msword',
+                        '.png': 'image/png',
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.zip': 'application/zip',
+                        '.csv': 'text/csv',
+                    }
+                    mime_type = mime_map.get(ext, 'application/octet-stream')
+                    email_attachments.append({
+                        "data": file_bytes,
+                        "filename": att.file_name,
+                        "mime_type": mime_type
+                    })
+            except Exception as ex:
+                print(f"Could not attach forwarded file in notification '{att.file_name}': {ex}")
+                
         send_email_with_attachments(
             to_email=user.email,
-            subject=f"⚙️ ACCIÓN REQUERIDA: Tarea '{task_name}' en {inst.title}",
+            subject=f"📢 NOTIFICACIÓN: '{node_name}' en {instance.internal_code or instance.title}",
             html_content=html_content,
-            attachments=attachments
+            attachments=email_attachments
         )
 
 def send_workflow_completed_notification(db: Session, instance: WorkflowInstance):

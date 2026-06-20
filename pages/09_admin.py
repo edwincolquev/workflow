@@ -42,6 +42,8 @@ def generate_mermaid(nodes, transitions):
     lines.append("    classDef startNode fill:#d1fae5,stroke:#065f46,stroke-width:2px,color:#065f46;")
     lines.append("    classDef taskNode fill:#dbeafe,stroke:#1e40af,stroke-width:2px,color:#1e40af;")
     lines.append("    classDef decisionNode fill:#fef3c7,stroke:#92400e,stroke-width:2px,color:#92400e;")
+    lines.append("    classDef gatewayNode fill:#e2e8f0,stroke:#475569,stroke-width:2px,color:#475569;")
+    lines.append("    classDef notificationNode fill:#fae8ff,stroke:#86198f,stroke-width:2px,color:#86198f;")
     lines.append("    classDef endNode fill:#fee2e2,stroke:#991b1b,stroke-width:2px,color:#991b1b;")
     
     # Node declarations
@@ -52,6 +54,10 @@ def generate_mermaid(nodes, transitions):
             style_class = "startNode"
         elif n.type == "DECISION":
             style_class = "decisionNode"
+        elif n.type == "GATEWAY":
+            style_class = "gatewayNode"
+        elif n.type == "NOTIFICATION":
+            style_class = "notificationNode"
         elif n.type == "END":
             style_class = "endNode"
         lines.append(f'    N{n.id}["{clean_name} ({n.type})"]:::{style_class}')
@@ -59,7 +65,8 @@ def generate_mermaid(nodes, transitions):
     # Transitions
     for t in transitions:
         clean_action = t.action_name.replace('"', '\\"')
-        lines.append(f'    N{t.source_node_id} -->|"{clean_action} ({t.role.name})"| N{t.target_node_id}')
+        role_name = t.source_node.role.name if t.source_node.role else "Cualquiera"
+        lines.append(f'    N{t.source_node_id} -->|"{clean_action} ({role_name})"| N{t.target_node_id}')
         
     return "\n".join(lines)
 
@@ -104,10 +111,10 @@ with get_db() as db:
                     trans_data.append({
                         'ID': t.id,
                         'Etapa Origen': t.source_node.name,
-                        'Rol Autorizado': t.role.name,
+                        'Rol que Ejecuta': t.source_node.role.name if t.source_node.role else "Cualquiera",
                         'Acción (Nombre Botón)': t.action_name,
                         'Etapa Destino': t.target_node.name,
-                        'Rol Destino': t.target_role.name if t.target_role else "Ninguno"
+                        'Rol Destino': t.target_node.role.name if t.target_node.role else "Ninguno"
                     })
                 
                 df_trans = pd.DataFrame(trans_data)
@@ -139,34 +146,29 @@ with get_db() as db:
             if not nodes:
                 st.warning("Debe crear nodos para este proceso antes de agregar transiciones.")
             else:
-                # Form to add transition
-                with st.form("new_transition_form"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        source_node_id = st.selectbox("Nodo Origen", options=list(node_map.keys()), format_func=lambda x: node_map[x])
-                        role_auth_id = st.selectbox("Rol que Ejecuta la Acción", options=list(role_map.keys()), format_func=lambda x: role_map[x], key="new_trans_role_auth")
-                        action_name = st.text_input("Nombre de la Acción (Texto en Botón)", placeholder="Enviar a Viaje Marítimo")
-                    with col2:
-                        target_node_id = st.selectbox("Nodo Destino", options=list(node_map.keys()), format_func=lambda x: node_map[x])
-                        target_role_id = st.selectbox("Rol Asignado al Destino (si es TASK)", options=[0] + list(role_map.keys()), format_func=lambda x: role_map[x] if x != 0 else "Ninguno")
-                    
-                    submit_btn = st.form_submit_button("Guardar Regla")
-                    if submit_btn:
-                        if not action_name.strip():
-                            st.error("Debes ingresar el nombre de la acción.")
-                        else:
-                            new_t = WorkflowTransition(
-                                process_id=selected_proc.id,
-                                source_node_id=source_node_id,
-                                role_id=role_auth_id,
-                                action_name=action_name.strip(),
-                                target_node_id=target_node_id,
-                                target_role_id=target_role_id if target_role_id != 0 else None
-                            )
-                            db.add(new_t)
-                            db.commit()
-                            st.success("¡Transición agregada con éxito!")
-                            st.rerun()
+                # Node-centric simple transition layout
+                col1, col2 = st.columns(2)
+                with col1:
+                    source_node_id = st.selectbox("Nodo Origen", options=list(node_map.keys()), format_func=lambda x: node_map[x], key="new_source_node")
+                    action_name = st.text_input("Nombre de la Acción (Texto en Botón)", placeholder="Enviar a Viaje Marítimo", key="new_action_name")
+                with col2:
+                    target_node_id = st.selectbox("Nodo Destino", options=list(node_map.keys()), format_func=lambda x: node_map[x], key="new_target_node")
+                
+                submit_btn = st.button("Guardar Regla", key="save_rule_btn_new")
+                if submit_btn:
+                    if not action_name.strip():
+                        st.error("Debes ingresar el nombre de la acción.")
+                    else:
+                        new_t = WorkflowTransition(
+                            process_id=selected_proc.id,
+                            source_node_id=source_node_id,
+                            action_name=action_name.strip(),
+                            target_node_id=target_node_id
+                        )
+                        db.add(new_t)
+                        db.commit()
+                        st.success("¡Transición agregada con éxito!")
+                        st.rerun()
 
             st.markdown("---")
             st.markdown("##### 📋 Secuencia Cronológica de Transiciones")
@@ -224,13 +226,15 @@ with get_db() as db:
                 for r in all_roles:
                     row[r.name] = ""
                 
-                actor_role = t.role.name
-                target_role = t.target_role.name if t.target_role else actor_role
+                actor_role = t.source_node.role.name if t.source_node.role else None
+                target_role = t.target_node.role.name if t.target_node.role else actor_role
                 
-                if actor_role == target_role:
-                    row[actor_role] = f"{t.action_name} ➔ {t.target_node.name}"
-                else:
-                    row[actor_role] = t.action_name
+                if actor_role and actor_role in row:
+                    if actor_role == target_role or not target_role:
+                        row[actor_role] = f"{t.action_name} ➔ {t.target_node.name}"
+                    else:
+                        row[actor_role] = t.action_name
+                if target_role and target_role in row and actor_role != target_role:
                     row[target_role] = t.target_node.name
                     
                 grid_rows.append(row)
@@ -335,6 +339,8 @@ with get_db() as db:
                         'ID': n.id,
                         'Nombre Etapa': n.name,
                         'Tipo': n.type,
+                        'Rol Responsable': n.role.name if n.role else "Ninguno",
+                        'SLA (Horas)': n.sla_hours or "Sin SLA",
                         'Descripción': n.description or "Sin descripción"
                     })
                 st.dataframe(pd.DataFrame(nodes_df_list), use_container_width=True, hide_index=True)
@@ -345,18 +351,25 @@ with get_db() as db:
             with t_add_n:
                 with st.form("add_node_form"):
                     n_name = st.text_input("Nombre del Nodo", placeholder="Aduana")
-                    n_type = st.selectbox("Tipo de Nodo", ['START', 'TASK', 'DECISION', 'END'])
+                    n_type = st.selectbox("Tipo de Nodo", ['START', 'TASK', 'DECISION', 'GATEWAY', 'NOTIFICATION', 'END'])
+                    n_role = st.selectbox("Rol Responsable (Obligatorio para TASK, DECISION y NOTIFICATION)", options=[0] + list(role_map.keys()), format_func=lambda x: role_map[x] if x != 0 else "Ninguno")
                     n_desc = st.text_input("Descripción breve")
+                    n_sla = st.number_input("Horas de SLA (Tiempo estimado de ejecución, 0 = Sin SLA)", min_value=0, value=0, step=1)
                     
                     if st.form_submit_button("Guardar Nuevo Nodo"):
                         if not n_name.strip():
                             st.error("El nombre del nodo es requerido.")
+                        elif n_type in ['TASK', 'DECISION', 'NOTIFICATION'] and n_role == 0:
+                            st.error(f"El nodo tipo '{n_type}' requiere obligatoriamente un Rol Responsable.")
                         else:
+                            sla_val = n_sla if n_sla > 0 else None
                             new_node = WorkflowNode(
                                 process_id=selected_proc_p.id,
                                 name=n_name.strip(),
                                 type=n_type,
-                                description=n_desc.strip()
+                                role_id=n_role if n_role != 0 else None,
+                                description=n_desc.strip(),
+                                sla_hours=sla_val
                             )
                             db.add(new_node)
                             db.commit()
@@ -379,16 +392,29 @@ with get_db() as db:
                     if edit_node:
                         with st.form("edit_node_form"):
                             en_name = st.text_input("Nombre del Nodo", value=edit_node.name)
-                            en_type = st.selectbox("Tipo de Nodo", ['START', 'TASK', 'DECISION', 'END'], index=['START', 'TASK', 'DECISION', 'END'].index(edit_node.type))
+                            en_types = ['START', 'TASK', 'DECISION', 'GATEWAY', 'NOTIFICATION', 'END']
+                            en_type_idx = en_types.index(edit_node.type) if edit_node.type in en_types else 0
+                            en_type = st.selectbox("Tipo de Nodo", en_types, index=en_type_idx)
+                            en_role = st.selectbox(
+                                "Rol Responsable (Obligatorio para TASK, DECISION y NOTIFICATION)",
+                                options=[0] + list(role_map.keys()),
+                                format_func=lambda x: role_map[x] if x != 0 else "Ninguno",
+                                index=0 if not edit_node.role_id else list(role_map.keys()).index(edit_node.role_id) + 1
+                            )
                             en_desc = st.text_input("Descripción", value=edit_node.description or "")
+                            en_sla = st.number_input("Horas de SLA (Tiempo estimado de ejecución, 0 = Sin SLA)", min_value=0, value=edit_node.sla_hours or 0, step=1)
                             
                             if st.form_submit_button("Actualizar Nodo"):
                                 if not en_name.strip():
                                     st.error("El nombre no puede estar vacío.")
+                                elif en_type in ['TASK', 'DECISION', 'NOTIFICATION'] and en_role == 0:
+                                    st.error(f"El nodo tipo '{en_type}' requiere obligatoriamente un Rol Responsable.")
                                 else:
                                     edit_node.name = en_name.strip()
                                     edit_node.type = en_type
+                                    edit_node.role_id = en_role if en_role != 0 else None
                                     edit_node.description = en_desc.strip()
+                                    edit_node.sla_hours = en_sla if en_sla > 0 else None
                                     db.commit()
                                     st.success(f"Nodo '{en_name}' actualizado.")
                                     st.rerun()

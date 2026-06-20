@@ -60,12 +60,12 @@ def seed_data():
             # Nodes for Importaciones
             nodes = {
                 'start': WorkflowNode(process_id=proc_imp.id, name="Inicio", type="START", description="Punto de partida"),
-                'oc': WorkflowNode(process_id=proc_imp.id, name="OC Emitida", type="TASK", description="Se revisa y emite la Orden de Compra"),
-                'viaje': WorkflowNode(process_id=proc_imp.id, name="Viaje Marítimo", type="TASK", description="Contenedor en tránsito en barco"),
-                'aduana': WorkflowNode(process_id=proc_imp.id, name="Aduana", type="TASK", description="Trámites aduanales e internación"),
-                'canal': WorkflowNode(process_id=proc_imp.id, name="Canal Rojo", type="TASK", description="Revisión exhaustiva por canal rojo en puerto"),
-                'tlocal': WorkflowNode(process_id=proc_imp.id, name="Transporte Local", type="TASK", description="Traslado terrestre del contenedor al CD"),
-                'almacen': WorkflowNode(process_id=proc_imp.id, name="Almacén", type="TASK", description="Recepción y conteo físico de mercadería"),
+                'oc': WorkflowNode(process_id=proc_imp.id, name="OC Emitida", type="TASK", description="Se revisa y emite la Orden de Compra", role_id=roles_dict['Compras'].id),
+                'viaje': WorkflowNode(process_id=proc_imp.id, name="Viaje Marítimo", type="TASK", description="Contenedor en tránsito en barco", role_id=roles_dict['Importaciones'].id),
+                'aduana': WorkflowNode(process_id=proc_imp.id, name="Aduana", type="TASK", description="Trámites aduanales e internación", role_id=roles_dict['Logística'].id),
+                'canal': WorkflowNode(process_id=proc_imp.id, name="Canal Rojo", type="TASK", description="Revisión exhaustiva por canal rojo en puerto", role_id=roles_dict['Logística'].id),
+                'tlocal': WorkflowNode(process_id=proc_imp.id, name="Transporte Local", type="TASK", description="Traslado terrestre del contenedor al CD", role_id=roles_dict['Logística'].id),
+                'almacen': WorkflowNode(process_id=proc_imp.id, name="Almacén", type="TASK", description="Recepción y conteo físico de mercadería", role_id=roles_dict['Logística'].id),
                 'end': WorkflowNode(process_id=proc_imp.id, name="Ingresado", type="END", description="Carga ingresada al stock operativo")
             }
             for node in nodes.values():
@@ -78,118 +78,92 @@ def seed_data():
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['start'].id, 
-                    role_id=roles_dict['Administrador'].id, 
                     action_name="Auto-Iniciar", 
-                    target_node_id=nodes['oc'].id, 
-                    target_role_id=roles_dict['Compras'].id
+                    target_node_id=nodes['oc'].id
                 ),
                 # OC Emitida -> Viaje Marítimo
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['oc'].id, 
-                    role_id=roles_dict['Compras'].id, 
                     action_name="Enviar a Viaje Marítimo", 
-                    target_node_id=nodes['viaje'].id, 
-                    target_role_id=roles_dict['Importaciones'].id
+                    target_node_id=nodes['viaje'].id
                 ),
                 # OC Emitida -> Observar OC
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['oc'].id, 
-                    role_id=roles_dict['Compras'].id, 
                     action_name="Revisar y Observar OC", 
-                    target_node_id=nodes['oc'].id, 
-                    target_role_id=roles_dict['Compras'].id
+                    target_node_id=nodes['oc'].id
                 ),
                 # OC Emitida -> Cancelar
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['oc'].id, 
-                    role_id=roles_dict['Compras'].id, 
                     action_name="Cancelar Importación", 
-                    target_node_id=nodes['end'].id, 
-                    target_role_id=roles_dict['Administrador'].id
+                    target_node_id=nodes['end'].id
                 ),
                 # Viaje Marítimo -> Aduana
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['viaje'].id, 
-                    role_id=roles_dict['Importaciones'].id, 
                     action_name="Llegada a Puerto (Aduana)", 
-                    target_node_id=nodes['aduana'].id, 
-                    target_role_id=roles_dict['Logística'].id
+                    target_node_id=nodes['aduana'].id
                 ),
                 # Viaje Marítimo -> Reportar Retraso
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['viaje'].id, 
-                    role_id=roles_dict['Importaciones'].id, 
                     action_name="Reportar Retraso Marítimo", 
-                    target_node_id=nodes['viaje'].id, 
-                    target_role_id=roles_dict['Importaciones'].id
+                    target_node_id=nodes['viaje'].id
                 ),
                 # Aduana -> Transporte Local (Canal Verde)
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['aduana'].id, 
-                    role_id=roles_dict['Logística'].id, 
                     action_name="Liberar Canal Verde", 
-                    target_node_id=nodes['tlocal'].id, 
-                    target_role_id=roles_dict['Logística'].id
+                    target_node_id=nodes['tlocal'].id
                 ),
                 # Aduana -> Canal Rojo
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['aduana'].id, 
-                    role_id=roles_dict['Logística'].id, 
                     action_name="Desviar a Canal Rojo", 
-                    target_node_id=nodes['canal'].id, 
-                    target_role_id=roles_dict['Logística'].id
+                    target_node_id=nodes['canal'].id
                 ),
                 # Aduana -> Observar / Devolver
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['aduana'].id, 
-                    role_id=roles_dict['Logística'].id, 
                     action_name="Devolver a Viaje (Falta Documentos)", 
-                    target_node_id=nodes['viaje'].id, 
-                    target_role_id=roles_dict['Importaciones'].id
+                    target_node_id=nodes['viaje'].id
                 ),
                 # Canal Rojo -> Transporte Local
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['canal'].id, 
-                    role_id=roles_dict['Logística'].id, 
                     action_name="Liberar de Canal Rojo", 
-                    target_node_id=nodes['tlocal'].id, 
-                    target_role_id=roles_dict['Logística'].id
+                    target_node_id=nodes['tlocal'].id
                 ),
                 # Canal Rojo -> Devolver a Aduana
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['canal'].id, 
-                    role_id=roles_dict['Logística'].id, 
                     action_name="Devolver a Aduana (Ajustar Trámite)", 
-                    target_node_id=nodes['aduana'].id, 
-                    target_role_id=roles_dict['Logística'].id
+                    target_node_id=nodes['aduana'].id
                 ),
                 # Transporte Local -> Almacén
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['tlocal'].id, 
-                    role_id=roles_dict['Logística'].id, 
                     action_name="Entregar Contenedor a Almacén", 
-                    target_node_id=nodes['almacen'].id, 
-                    target_role_id=roles_dict['Logística'].id
+                    target_node_id=nodes['almacen'].id
                 ),
                 # Almacén -> Ingresado (END)
                 WorkflowTransition(
                     process_id=proc_imp.id, 
                     source_node_id=nodes['almacen'].id, 
-                    role_id=roles_dict['Logística'].id, 
                     action_name="Confirmar Ingreso a Stock", 
-                    target_node_id=nodes['end'].id, 
-                    target_role_id=roles_dict['Gerencia'].id
+                    target_node_id=nodes['end'].id
                 )
             ]
             for transition in transitions:
@@ -208,11 +182,11 @@ def seed_data():
             # Nodes for Items Nuevos
             nodes = {
                 'start': WorkflowNode(process_id=proc_new.id, name="Inicio", type="START", description="Item creado en base de datos"),
-                'creado': WorkflowNode(process_id=proc_new.id, name="Item Creado", type="TASK", description="Se verifica la ficha técnica inicial"),
-                'catalogo': WorkflowNode(process_id=proc_new.id, name="Preparación Catálogos", type="TASK", description="Fotos, descripciones y compatibilidades"),
-                'homol': WorkflowNode(process_id=proc_new.id, name="Homologación", type="TASK", description="Certificaciones y pruebas de compatibilidad nacional"),
-                'espacio': WorkflowNode(process_id=proc_new.id, name="Asignación de Espacios CDC", type="TASK", description="Definir ubicación física en rack/almacén"),
-                'aprob': WorkflowNode(process_id=proc_new.id, name="Aprobación Final", type="TASK", description="Habilitar precio de lista y activar flag de ventas"),
+                'creado': WorkflowNode(process_id=proc_new.id, name="Item Creado", type="TASK", description="Se verifica la ficha técnica inicial", role_id=roles_dict['Compras'].id),
+                'catalogo': WorkflowNode(process_id=proc_new.id, name="Preparación Catálogos", type="TASK", description="Fotos, descripciones y compatibilidades", role_id=roles_dict['Compras'].id),
+                'homol': WorkflowNode(process_id=proc_new.id, name="Homologación", type="TASK", description="Certificaciones y pruebas de compatibilidad nacional", role_id=roles_dict['Logística'].id),
+                'espacio': WorkflowNode(process_id=proc_new.id, name="Asignación de Espacios CDC", type="TASK", description="Definir ubicación física en rack/almacén", role_id=roles_dict['Logística'].id),
+                'aprob': WorkflowNode(process_id=proc_new.id, name="Aprobación Final", type="TASK", description="Habilitar precio de lista y activar flag de ventas", role_id=roles_dict['Gerencia'].id),
                 'end': WorkflowNode(process_id=proc_new.id, name="Item Liberado", type="END", description="Producto disponible para la venta")
             }
             for node in nodes.values():
@@ -225,73 +199,57 @@ def seed_data():
                 WorkflowTransition(
                     process_id=proc_new.id, 
                     source_node_id=nodes['start'].id, 
-                    role_id=roles_dict['Administrador'].id, 
                     action_name="Habilitar Ficha", 
-                    target_node_id=nodes['creado'].id, 
-                    target_role_id=roles_dict['Compras'].id
+                    target_node_id=nodes['creado'].id
                 ),
                 # Creado -> Catálogos
                 WorkflowTransition(
                     process_id=proc_new.id, 
                     source_node_id=nodes['creado'].id, 
-                    role_id=roles_dict['Compras'].id, 
                     action_name="Enviar a Preparar Catálogos", 
-                    target_node_id=nodes['catalogo'].id, 
-                    target_role_id=roles_dict['Compras'].id
+                    target_node_id=nodes['catalogo'].id
                 ),
                 # Catálogos -> Homologación
                 WorkflowTransition(
                     process_id=proc_new.id, 
                     source_node_id=nodes['catalogo'].id, 
-                    role_id=roles_dict['Compras'].id, 
                     action_name="Enviar a Homologación", 
-                    target_node_id=nodes['homol'].id, 
-                    target_role_id=roles_dict['Logística'].id
+                    target_node_id=nodes['homol'].id
                 ),
                 # Homologación -> Espacios
                 WorkflowTransition(
                     process_id=proc_new.id, 
                     source_node_id=nodes['homol'].id, 
-                    role_id=roles_dict['Logística'].id, 
                     action_name="Aprobar Certificación", 
-                    target_node_id=nodes['espacio'].id, 
-                    target_role_id=roles_dict['Logística'].id
+                    target_node_id=nodes['espacio'].id
                 ),
                 # Homologación -> Observar (devuelve a Item Creado)
                 WorkflowTransition(
                     process_id=proc_new.id, 
                     source_node_id=nodes['homol'].id, 
-                    role_id=roles_dict['Logística'].id, 
                     action_name="Observar Ficha Técnica", 
-                    target_node_id=nodes['creado'].id, 
-                    target_role_id=roles_dict['Compras'].id
+                    target_node_id=nodes['creado'].id
                 ),
                 # Espacios -> Aprobación Final
                 WorkflowTransition(
                     process_id=proc_new.id, 
                     source_node_id=nodes['espacio'].id, 
-                    role_id=roles_dict['Logística'].id, 
                     action_name="Definir Ubicación Almacén", 
-                    target_node_id=nodes['aprob'].id, 
-                    target_role_id=roles_dict['Gerencia'].id
+                    target_node_id=nodes['aprob'].id
                 ),
                 # Aprobación Final -> Liberado (END)
                 WorkflowTransition(
                     process_id=proc_new.id, 
                     source_node_id=nodes['aprob'].id, 
-                    role_id=roles_dict['Gerencia'].id, 
                     action_name="Aprobar y Publicar Item", 
-                    target_node_id=nodes['end'].id, 
-                    target_role_id=roles_dict['Gerencia'].id
+                    target_node_id=nodes['end'].id
                 ),
                 # Aprobación Final -> Devolver a Espacios
                 WorkflowTransition(
                     process_id=proc_new.id, 
                     source_node_id=nodes['aprob'].id, 
-                    role_id=roles_dict['Gerencia'].id, 
                     action_name="Rechazar Espacio Asignado", 
-                    target_node_id=nodes['espacio'].id, 
-                    target_role_id=roles_dict['Logística'].id
+                    target_node_id=nodes['espacio'].id
                 )
             ]
             for transition in transitions:

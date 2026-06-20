@@ -26,18 +26,26 @@ class WorkflowEngine:
             raise ValueError("El proceso no tiene un nodo inicial (START).")
 
         # 2. Create instance
+        docnum_val = None
+        if external_ref and external_ref.startswith("DocNum:"):
+            docnum_val = external_ref.split(":")[1]
+
         instance = WorkflowInstance(
             process_id=process_id,
             title=title,
             status='ACTIVE',
             current_node_id=start_node.id,
             external_ref=external_ref,
+            docnum=docnum_val,
             created_by_id=creator_id,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
         db.add(instance)
         db.flush()  # Generate instance ID
+        
+        # Auto-generate internal code (WF-XXXX)
+        instance.internal_code = f"WF-{instance.id:04d}"
 
         # 3. Log creation in history
         history = WorkflowHistory(
@@ -51,49 +59,87 @@ class WorkflowEngine:
         )
         db.add(history)
 
-        # 4. Auto-advance from START node to the first TASK
-        # We find transitions originating from START node
+        # 4. Auto-advance from START node using a queue (BFS) to resolve any GATEWAY or NOTIFICATION nodes
         start_transition = db.query(WorkflowTransition).filter(
             WorkflowTransition.process_id == process_id,
             WorkflowTransition.source_node_id == start_node.id
         ).first()
 
+        new_tasks = []
         if start_transition:
-            # Advance to first target node automatically
-            target_node = start_transition.target_node
-            instance.current_node_id = target_node.id
-            
-            # Log transition in history
-            history_trans = WorkflowHistory(
-                instance_id=instance.id,
-                source_node_id=start_node.id,
-                target_node_id=target_node.id,
-                user_id=creator_id,
-                action='TRANSITION',
-                comment="Transición automática inicial.",
-                timestamp=datetime.utcnow()
-            )
-            db.add(history_trans)
+            # Queue elements: (curr_target, action_name, source_node_id)
+            queue = [(start_transition.target_node, start_transition.action_name, start_node.id)]
+            last_target_node_id = None
 
-            # If it's a TASK node, create a pending task
-            if target_node.type == 'TASK':
-                task = WorkflowTask(
+            while queue:
+                curr_target, action, src_id = queue.pop(0)
+                last_target_node_id = curr_target.id
+
+                # Log transition in history
+                history_comment = f"Transición automática inicial: '{action}'."
+                if curr_target.type == 'GATEWAY':
+                    history_comment = f"Avance automático a compuerta: '{curr_target.name}'."
+                elif curr_target.type == 'NOTIFICATION':
+                    history_comment = f"Avance automático a etapa de notificación: '{curr_target.name}'."
+
+                history_trans = WorkflowHistory(
                     instance_id=instance.id,
-                    node_id=target_node.id,
-                    assigned_role_id=start_transition.target_role_id,
-                    status='PENDING',
-                    created_at=datetime.utcnow()
+                    source_node_id=src_id,
+                    target_node_id=curr_target.id,
+                    user_id=creator_id,
+                    action='TRANSITION',
+                    comment=history_comment,
+                    timestamp=datetime.utcnow()
                 )
-                db.add(task)
-        
+                db.add(history_trans)
+
+                # Check target node type
+                if curr_target.type in ['TASK', 'DECISION']:
+                    task = WorkflowTask(
+                        instance_id=instance.id,
+                        node_id=curr_target.id,
+                        assigned_role_id=curr_target.role_id,
+                        status='PENDING',
+                        sla_hours=curr_target.sla_hours, # Inherited from node config
+                        created_at=datetime.utcnow()
+                    )
+                    db.add(task)
+                    new_tasks.append(task)
+                elif curr_target.type == 'GATEWAY':
+                    # Automatically execute all transitions originating from this GATEWAY
+                    gateway_transitions = db.query(WorkflowTransition).filter(
+                        WorkflowTransition.process_id == process_id,
+                        WorkflowTransition.source_node_id == curr_target.id
+                    ).all()
+                    for gt in gateway_transitions:
+                        queue.append((gt.target_node, gt.action_name, curr_target.id))
+                elif curr_target.type == 'NOTIFICATION':
+                    # Trigger info email notification for the role assigned to this notification node
+                    try:
+                        from services.email_service import send_info_notification_email
+                        send_info_notification_email(db, instance, curr_target)
+                    except Exception as e:
+                        print(f"Error sending info notification: {str(e)}")
+                    # Automatically execute all transitions originating from this NOTIFICATION node
+                    notif_transitions = db.query(WorkflowTransition).filter(
+                        WorkflowTransition.process_id == process_id,
+                        WorkflowTransition.source_node_id == curr_target.id
+                    ).all()
+                    for nt in notif_transitions:
+                        queue.append((nt.target_node, nt.action_name, curr_target.id))
+
+            if last_target_node_id:
+                instance.current_node_id = last_target_node_id
+
         db.commit()
-        
-        # Trigger email notification for the initial task
-        if start_transition and target_node.type == 'TASK':
+
+        # Trigger email notification for any newly created tasks
+        if new_tasks:
             try:
-                db.refresh(task)
                 from services.email_service import send_task_notification_email
-                send_task_notification_email(db, task)
+                for task in new_tasks:
+                    db.refresh(task)
+                    send_task_notification_email(db, task)
             except Exception as e:
                 print(f"Error sending task notification: {str(e)}")
                 
@@ -126,29 +172,40 @@ class WorkflowEngine:
             WorkflowTransition.source_node_id.in_(active_node_ids)
         ).all()
 
-        # Filter transitions by user's roles
+        # Filter transitions by user's roles matching the source node's role
         user_role_ids = [role.id for role in user.roles]
         available = []
         for t in transitions:
-            if t.role_id in user_role_ids:
+            if not t.source_node.role_id or t.source_node.role_id in user_role_ids:
                 available.append(t)
                 
         return available
 
     @staticmethod
-    def execute_transition(db: Session, instance_id: int, transition_id: int, user_id: int, comment_text: str = None) -> WorkflowInstance:
+    def execute_transition(db: Session, instance_id: int, transition_id: int, user_id: int, comment_text: str = None, docnum_value: str = None) -> WorkflowInstance:
         """
         Advances the workflow along a transition, completing the current task
         and creating the next task(s) or finalizing the workflow.
         For TASK nodes, it completes the task and automatically executes ALL outgoing transitions.
         For DECISION nodes, it executes only the selected transition.
         """
+        # Enforce comment requirement
+        if not comment_text or not comment_text.strip():
+            raise ValueError("El comentario u observación es obligatorio para realizar esta acción.")
+
         # 1. Load objects
         instance = db.query(WorkflowInstance).filter(WorkflowInstance.id == instance_id).first()
         if not instance:
             raise ValueError("La instancia no existe.")
         if instance.status != 'ACTIVE':
             raise ValueError("La instancia no está activa.")
+
+        # Update docnum and external_ref if provided
+        if docnum_value:
+            docnum_clean = docnum_value.strip()
+            if docnum_clean:
+                instance.docnum = docnum_clean
+                instance.external_ref = f"DocNum:{docnum_clean}"
 
         transition = db.query(WorkflowTransition).filter(WorkflowTransition.id == transition_id).first()
         if not transition or transition.process_id != instance.process_id:
@@ -158,12 +215,12 @@ class WorkflowEngine:
         if not user:
             raise ValueError("Usuario no existe.")
             
-        user_role_ids = [role.id for role in user.roles]
-        if transition.role_id not in user_role_ids:
-            raise ValueError("El usuario no tiene el rol requerido para esta acción.")
-
         source_node = transition.source_node
-        
+        if source_node.role_id:
+            user_role_ids = [role.id for role in user.roles]
+            if source_node.role_id not in user_role_ids:
+                raise ValueError("El usuario no tiene el rol requerido para esta acción.")
+
         # 2. Complete the current pending task for this node
         current_task = db.query(WorkflowTask).filter(
             WorkflowTask.instance_id == instance_id,
@@ -202,42 +259,94 @@ class WorkflowEngine:
         else:
             transitions_to_execute = [transition]
 
+        # Collect attachments from the completed source task to forward to next node
+        from models import WorkflowAttachment
+        forwarded_attachments = []
+        if current_task:
+            forwarded_attachments = db.query(WorkflowAttachment).filter(
+                WorkflowAttachment.task_id == current_task.id
+            ).all()
+
+        # Queue elements: (curr_target, action_name, source_node_id)
+        queue = []
+        for t in transitions_to_execute:
+            queue.append((t.target_node, t.action_name, t.source_node_id))
+
         # Keep track of tasks created for notifications
         new_tasks = []
         completed_workflow = False
         last_target_node_id = None
 
-        for t in transitions_to_execute:
-            target_node = t.target_node
-            last_target_node_id = target_node.id
-            
+        while queue:
+            curr_target, action, src_id = queue.pop(0)
+            last_target_node_id = curr_target.id
+
             # Log history
+            # Only append user comment to the direct transitions originating from user interaction (first level)
+            is_first_level = (src_id == source_node.id)
+            if is_first_level:
+                history_comment = f"Acción ejecutada: '{action}'." + (f" Comentario: {comment_text}" if comment_text else "")
+            else:
+                if curr_target.type == 'GATEWAY':
+                    history_comment = f"Avance automático a compuerta: '{curr_target.name}'."
+                elif curr_target.type == 'NOTIFICATION':
+                    history_comment = f"Avance automático a etapa de notificación: '{curr_target.name}'."
+                else:
+                    history_comment = f"Transición automática a través de compuerta: '{action}'."
+
             history = WorkflowHistory(
                 instance_id=instance_id,
                 task_id=current_task.id if current_task else None,
-                source_node_id=source_node.id,
-                target_node_id=target_node.id,
+                source_node_id=src_id,
+                target_node_id=curr_target.id,
                 user_id=user_id,
                 action='TRANSITION',
-                comment=f"Acción ejecutada: '{t.action_name}'." + (f" Comentario: {comment_text}" if comment_text else ""),
+                comment=history_comment,
                 timestamp=datetime.utcnow()
             )
             db.add(history)
 
             # Check target node type
-            if target_node.type == 'END':
+            if curr_target.type == 'END':
                 completed_workflow = True
-            elif target_node.type in ['TASK', 'DECISION']:
+            elif curr_target.type in ['TASK', 'DECISION']:
                 # Create a new pending task for the destination role
                 new_task = WorkflowTask(
                     instance_id=instance_id,
-                    node_id=target_node.id,
-                    assigned_role_id=t.target_role_id,
+                    node_id=curr_target.id,
+                    assigned_role_id=curr_target.role_id,
                     status='PENDING',
+                    sla_hours=curr_target.sla_hours, # Inherited from node config
                     created_at=datetime.utcnow()
                 )
                 db.add(new_task)
                 new_tasks.append(new_task)
+            elif curr_target.type == 'GATEWAY':
+                # Automatically execute all transitions originating from this GATEWAY
+                gateway_transitions = db.query(WorkflowTransition).filter(
+                    WorkflowTransition.process_id == instance.process_id,
+                    WorkflowTransition.source_node_id == curr_target.id
+                ).all()
+                for gt in gateway_transitions:
+                    queue.append((gt.target_node, gt.action_name, curr_target.id))
+            elif curr_target.type == 'NOTIFICATION':
+                # Send info notification immediately
+                try:
+                    from services.email_service import send_info_notification_email
+                    send_info_notification_email(
+                        db, instance, curr_target,
+                        from_comment=comment_text if is_first_level else None,
+                        from_attachments=forwarded_attachments if is_first_level else None
+                    )
+                except Exception as e:
+                    print(f"Error sending info notification: {str(e)}")
+                # Automatically execute all transitions originating from this NOTIFICATION node
+                notif_transitions = db.query(WorkflowTransition).filter(
+                    WorkflowTransition.process_id == instance.process_id,
+                    WorkflowTransition.source_node_id == curr_target.id
+                ).all()
+                for nt in notif_transitions:
+                    queue.append((nt.target_node, nt.action_name, curr_target.id))
 
         # Update instance state to the last processed target node
         if last_target_node_id:
@@ -266,6 +375,12 @@ class WorkflowEngine:
         instance.updated_at = datetime.utcnow()
         db.commit()
         
+        forwarded_attachments = []
+        if current_task:
+            forwarded_attachments = db.query(WorkflowAttachment).filter(
+                WorkflowAttachment.task_id == current_task.id
+            ).all()
+
         # Trigger email notifications
         try:
             from services.email_service import send_task_notification_email, send_workflow_completed_notification
@@ -274,7 +389,11 @@ class WorkflowEngine:
             
             for nt in new_tasks:
                 db.refresh(nt)
-                send_task_notification_email(db, nt)
+                send_task_notification_email(
+                    db, nt,
+                    from_comment=comment_text,
+                    from_attachments=forwarded_attachments
+                )
         except Exception as e:
             print(f"Error sending transition notifications: {str(e)}")
             
@@ -347,13 +466,7 @@ class WorkflowEngine:
         if not first_task_node:
             raise ValueError("No se encontró un nodo tipo TASK para reabrir el proceso.")
 
-        # Find standard transition for this first task node to identify the default role
-        transition = db.query(WorkflowTransition).filter(
-            WorkflowTransition.process_id == instance.process_id,
-            WorkflowTransition.target_node_id == first_task_node.id
-        ).first()
-        
-        assigned_role_id = transition.target_role_id if transition else db.query(WorkflowRole).first().id
+        assigned_role_id = first_task_node.role_id if first_task_node.role_id else db.query(WorkflowRole).first().id
 
         old_status = instance.status
         instance.status = 'ACTIVE'

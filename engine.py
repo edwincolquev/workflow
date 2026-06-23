@@ -335,8 +335,8 @@ class WorkflowEngine:
                     from services.email_service import send_info_notification_email
                     send_info_notification_email(
                         db, instance, curr_target,
-                        from_comment=comment_text if is_first_level else None,
-                        from_attachments=forwarded_attachments if is_first_level else None
+                        from_comment=comment_text,
+                        from_attachments=forwarded_attachments
                     )
                 except Exception as e:
                     print(f"Error sending info notification: {str(e)}")

@@ -111,10 +111,10 @@ with get_db() as db:
                     trans_data.append({
                         'ID': t.id,
                         'Etapa Origen': t.source_node.name,
+                        'Tipo': t.source_node.type,
                         'Rol que Ejecuta': t.source_node.role.name if t.source_node.role else "Cualquiera",
                         'Acción (Nombre Botón)': t.action_name,
-                        'Etapa Destino': t.target_node.name,
-                        'Rol Destino': t.target_node.role.name if t.target_node.role else "Ninguno"
+                        'Etapa Destino': t.target_node.name
                     })
                 
                 df_trans = pd.DataFrame(trans_data)

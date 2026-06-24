@@ -114,11 +114,15 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
 
     # ── Build node description block (task instructions) ─────────────────────
     node_instructions_html = ""
-    if node_description.strip():
+    if node_description.strip() or task.node.template_file_name:
+        formatted_description = node_description.replace('\n', '<br>')
+        if task.node.template_file_name:
+            formatted_description += f"<br><br>📎 <b>Plantilla base adjunta:</b> {task.node.template_file_name}"
+            
         node_instructions_html = f"""
         <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 14px; margin: 15px 0; border-radius: 0 6px 6px 0;">
             <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: bold; color: #1d4ed8; text-transform: uppercase; letter-spacing: 0.5px;">📋 Instrucciones de la Tarea</p>
-            <p style="margin: 0; font-size: 13px; color: #1e3a5f; line-height: 1.5;">{node_description}</p>
+            <p style="margin: 0; font-size: 13px; color: #1e3a5f; line-height: 1.5;">{formatted_description}</p>
         </div>"""
 
     # ── Build previous node context block ──────────────────────────────────────
@@ -191,41 +195,52 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
         if not user.email:
             continue
             
-        # ── Option 1: Action form (approval with comment) ──────────────────────
-        form_actions_html = f"""
-        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-top: 15px; margin-bottom: 15px;">
-            <form action="{base_url}/" method="get">
-                <div style="margin-bottom: 12px;">
-                    <label for="comment" style="display: block; font-family: sans-serif; font-size: 13px; font-weight: bold; color: #1e293b; margin-bottom: 6px;">
-                        Escribe tus comentarios u observaciones (Requerido):
-                    </label>
-                    <textarea id="comment" name="comment" rows="3" required style="width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-family: sans-serif; font-size: 13px; resize: vertical;" placeholder="Ingresa detalles obligatorios sobre esta resolución..."></textarea>
-                </div>
-                <div style="margin-top: 10px;">
-        """
+        # ── Action buttons as plain <a href> links (Outlook-compatible) ────────
+        # IMPORTANT: Outlook 2007+ silently strips all <form>, <input>, <textarea>
+        # and <button type="submit"> elements. The ONLY reliable cross-client
+        # approach is using plain anchor tags with the token embedded in the URL.
+        # The comment field is entered on the web portal landing page (app.py).
         
         # Determine transitions to show
         is_task_node = (task.node.type == 'TASK')
         transitions_to_show = []
         if is_task_node and transitions:
             t_first = transitions[0]
-            display_name = "Confirmar y Continuar" if len(transitions) > 1 else t_first.action_name
+            display_name = "✅ Confirmar y Continuar" if len(transitions) > 1 else f"✅ {t_first.action_name}"
             transitions_to_show.append((t_first, display_name))
         else:
             for t in transitions:
-                transitions_to_show.append((t, t.action_name))
-                
+                transitions_to_show.append((t, f"▶ {t.action_name}"))
+
+        # Build styled anchor-tag buttons
+        buttons_html = ""
         for trans, action_display in transitions_to_show:
             token = generate_task_token(task.id, trans.id, user.id, action_name=trans.action_name)
-            form_actions_html += f"""
-            <button type="submit" name="token" value="{token}" style="display: inline-block; padding: 8px 16px; font-family: sans-serif; font-size: 13px; font-weight: bold; color: white; background-color: #3b82f6; border: none; border-radius: 5px; margin-right: 8px; margin-bottom: 8px; cursor: pointer;">
+            action_url = f"{base_url}/?token={token}"
+            buttons_html += f"""
+            <a href="{action_url}" target="_blank"
+               style="display: inline-block; padding: 10px 20px; font-family: Arial, sans-serif;
+                      font-size: 13px; font-weight: bold; color: white; background-color: #3b82f6;
+                      text-decoration: none; border-radius: 6px; margin-right: 10px;
+                      margin-bottom: 10px; mso-padding-alt: 10px 20px;">
+                <!--[if mso]><i style="letter-spacing: 20px; mso-font-width: -100%; mso-text-raise: 30pt;">&nbsp;</i><![endif]-->
                 {action_display}
-            </button>
+                <!--[if mso]><i style="letter-spacing: 20px; mso-font-width: -100%;">&nbsp;</i><![endif]-->
+            </a>
             """
-            
-        form_actions_html += """
-                </div>
-            </form>
+
+        form_actions_html = f"""
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+                    padding: 18px; margin-top: 15px; margin-bottom: 15px;">
+            <p style="margin: 0 0 6px 0; font-family: Arial, sans-serif; font-size: 13px;
+                      font-weight: bold; color: #1e293b;">
+                Haz clic en el botón para abrir el portal y confirmar la acción:
+            </p>
+            <p style="margin: 0 0 14px 0; font-family: Arial, sans-serif; font-size: 12px;
+                      color: #64748b;">
+                Se te pedirá ingresar un comentario o justificación en la página web antes de confirmar.
+            </p>
+            {buttons_html}
         </div>
         """
         
@@ -302,6 +317,33 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
                 "filename": pdf_filename,
                 "mime_type": "application/pdf"
             })
+            
+        # 1b. Node template attachment (if configured)
+        if task.node.template_file_path and os.path.exists(task.node.template_file_path):
+            try:
+                with open(task.node.template_file_path, 'rb') as f:
+                    template_bytes = f.read()
+                ext = os.path.splitext(task.node.template_file_name)[1].lower()
+                mime_map = {
+                    '.pdf': 'application/pdf',
+                    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    '.xls': 'application/vnd.ms-excel',
+                    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    '.doc': 'application/msword',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.zip': 'application/zip',
+                    '.csv': 'text/csv',
+                }
+                mime_type = mime_map.get(ext, 'application/octet-stream')
+                email_attachments.append({
+                    "data": template_bytes,
+                    "filename": task.node.template_file_name,
+                    "mime_type": mime_type
+                })
+            except Exception as ex:
+                print(f"Could not attach node template file: {ex}")
         
         # 2. Forwarded attachments from the previous node (read from disk)
         for att in from_attachments:
@@ -365,11 +407,15 @@ def send_info_notification_email(db: Session, instance: WorkflowInstance, node: 
     
     # Node description
     node_instructions_html = ""
-    if node_description.strip():
+    if node_description.strip() or node.template_file_name:
+        formatted_description = node_description.replace('\n', '<br>')
+        if node.template_file_name:
+            formatted_description += f"<br><br>📎 <b>Plantilla base adjunta:</b> {node.template_file_name}"
+            
         node_instructions_html = f"""
         <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 14px; margin: 15px 0; border-radius: 0 6px 6px 0;">
             <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: bold; color: #1d4ed8; text-transform: uppercase; letter-spacing: 0.5px;">📋 Detalle de la Notificación</p>
-            <p style="margin: 0; font-size: 13px; color: #1e3a5f; line-height: 1.5;">{node_description}</p>
+            <p style="margin: 0; font-size: 13px; color: #1e3a5f; line-height: 1.5;">{formatted_description}</p>
         </div>"""
         
     # Previous node context block
@@ -484,6 +530,33 @@ def send_info_notification_email(db: Session, instance: WorkflowInstance, node: 
                 "filename": pdf_filename,
                 "mime_type": "application/pdf"
             })
+            
+        # 1b. Node template attachment (if configured)
+        if node.template_file_path and os.path.exists(node.template_file_path):
+            try:
+                with open(node.template_file_path, 'rb') as f:
+                    template_bytes = f.read()
+                ext = os.path.splitext(node.template_file_name)[1].lower()
+                mime_map = {
+                    '.pdf': 'application/pdf',
+                    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    '.xls': 'application/vnd.ms-excel',
+                    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    '.doc': 'application/msword',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.zip': 'application/zip',
+                    '.csv': 'text/csv',
+                }
+                mime_type = mime_map.get(ext, 'application/octet-stream')
+                email_attachments.append({
+                    "data": template_bytes,
+                    "filename": node.template_file_name,
+                    "mime_type": mime_type
+                })
+            except Exception as ex:
+                print(f"Could not attach node template file to info email: {ex}")
             
         for att in from_attachments:
             try:

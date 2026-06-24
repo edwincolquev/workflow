@@ -93,7 +93,7 @@ with get_db() as db:
 
                     if st.button("Revisar & Avanzar Tarea", key=f"rev_btn_{task.id}"):
                         st.session_state.selected_workflow_instance_id = inst.id
-                        st.success(f"Cargando instancia {inst.internal_code or f'#{inst.id}'}. Por favor, haz clic en la página '08 Detalle Workflow' en el sidebar.")
+                        st.success(f"Cargando instancia {inst.internal_code or f'#{inst.id}'}. Por favor, haz clic en la página '03 Detalle Workflow' en el sidebar.")
                         st.rerun()
 
     # ==========================================
@@ -153,7 +153,7 @@ with get_db() as db:
                             )
                             st.success(f"✅ Proceso **{new_instance.internal_code}** creado con éxito: *{process_title.strip()}*")
                             st.session_state.selected_workflow_instance_id = new_instance.id
-                            st.info("💡 Haz clic en **08 Detalle Workflow** en el sidebar para ver y gestionar el proceso recién creado.")
+                            st.info("💡 Haz clic en **03 Detalle Workflow** en el sidebar para ver y gestionar el proceso recién creado.")
                         except Exception as e:
                             st.error(f"Error al crear el proceso: {str(e)}")
 
@@ -239,7 +239,7 @@ with get_db() as db:
             if inst_to_inspect:
                 if st.button("Ir a Detalles", key="go_to_active_details"):
                     st.session_state.selected_workflow_instance_id = inst_to_inspect
-                    st.success("Instancia cargada. Por favor, abre '08 Detalle Workflow' en el sidebar.")
+                    st.success("Instancia cargada. Por favor, abre '03 Detalle Workflow' en el sidebar.")
                     st.rerun()
 
     # ==========================================
@@ -314,5 +314,5 @@ with get_db() as db:
             if closed_to_inspect:
                 if st.button("Ver Historial de Instancia", key="go_to_closed_details"):
                     st.session_state.selected_workflow_instance_id = closed_to_inspect
-                    st.success("Instancia cargada para auditoría. Abre '08 Detalle Workflow' en el sidebar.")
+                    st.success("Instancia cargada para auditoría. Abre '03 Detalle Workflow' en el sidebar.")
                     st.rerun()

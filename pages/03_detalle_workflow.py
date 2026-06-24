@@ -8,9 +8,16 @@ from components.ui_helpers import UIHelpers
 from components.comments import CommentsComponent
 from components.attachments import AttachmentsComponent
 
+from config.settings import ROLE_ACCESS
+
 # 1. Session check
 if not st.session_state.get("authenticated", False):
     st.warning("Debe iniciar sesión en la página principal primero.")
+    st.stop()
+
+user_role = st.session_state.user['role']
+if not ROLE_ACCESS.get(user_role, {}).get('detalle_workflow', False):
+    st.error("Acceso denegado: Tu rol no tiene permisos para ver esta sección.")
     st.stop()
 
 # Apply CSS
@@ -25,7 +32,7 @@ st.markdown("<h1 class='main-header'>📋 Ejecución & Detalle del Workflow</h1>
 # 2. Check selected instance
 instance_id = st.session_state.get("selected_workflow_instance_id")
 if not instance_id:
-    st.info("💡 No se ha seleccionado ninguna instancia de workflow.\n\nPor favor, ve a **Bandeja de Entrada (Bandeja)** o a los módulos de análisis (**Tránsitos** o **Productos Nuevos**) y selecciona una tarea/registro para interactuar.")
+    st.info("💡 No se ha seleccionado ninguna instancia de workflow.\n\nPor favor, ve a **Bandeja de Entrada** (Bandeja) y selecciona una tarea para interactuar.")
     st.stop()
 
 with get_db() as db:
@@ -90,6 +97,31 @@ with get_db() as db:
         {sla_alert_html}
     </div>
     """, unsafe_allow_html=True)
+
+    # ─── SAP ERP Data (visible if DocNum is present) ─────────────────────────────
+    if instance.docnum:
+        with st.expander("📦 Detalle de Documento ERP (SAP B1)", expanded=True):
+            from services.data_loader import DataLoaderService
+            df_erp = DataLoaderService.get_sap_document_details(db, instance.docnum)
+            if not df_erp.empty:
+                # General fields in columns
+                c_erp1, c_erp2, c_erp3 = st.columns(3)
+                with c_erp1:
+                    st.metric("Número SAP B1", df_erp.iloc[0]['Número SAP'])
+                with c_erp2:
+                    st.metric("Proveedor", df_erp.iloc[0]['Nombre Proveedor'])
+                with c_erp3:
+                    st.metric("Total Documento", f"${df_erp.iloc[0]['Monto Total USD']:,} USD")
+                
+                # Items table
+                st.markdown("**Detalle de Partidas:**")
+                st.dataframe(
+                    df_erp[['Código Artículo', 'Descripción', 'Cantidad Solicitada', 'Cantidad Pendiente', 'Precio Unitario']],
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info(f"No se encontraron partidas activas en el ERP para el documento #{instance.docnum}. Verifique si está completado o cancelado en SAP.")
 
     # ─── DocNum Editor (always visible for active instances and admins) ───────────
     if instance.status == 'ACTIVE' or st.session_state.user['role'] in ['Administrador', 'Gerencia']:

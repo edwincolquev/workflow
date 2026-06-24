@@ -12,52 +12,32 @@ ROLES = [
 ROLE_ACCESS = {
     'Administrador': {
         'dashboard': True,
-        'transitos': True,
-        'inventarios': True,
-        'quebrados': True,
-        'nuevos': True,
-        'discontinuados': True,
         'bandeja': True,
+        'detalle_workflow': True,
         'admin': True
     },
     'Gerencia': {
         'dashboard': True,
-        'transitos': True,
-        'inventarios': True,
-        'quebrados': True,
-        'nuevos': True,
-        'discontinuados': True,
         'bandeja': True,
+        'detalle_workflow': True,
         'admin': False
     },
     'Compras': {
         'dashboard': True,
-        'transitos': False,
-        'inventarios': True,
-        'quebrados': True,
-        'nuevos': True,
-        'discontinuados': True,
         'bandeja': True,
+        'detalle_workflow': True,
         'admin': False
     },
     'Importaciones': {
         'dashboard': True,
-        'transitos': True,
-        'inventarios': False,
-        'quebrados': False,
-        'nuevos': False,
-        'discontinuados': False,
         'bandeja': True,
+        'detalle_workflow': True,
         'admin': False
     },
     'Logística': {
         'dashboard': True,
-        'transitos': True,
-        'inventarios': True,
-        'quebrados': False,
-        'nuevos': False,
-        'discontinuados': False,
         'bandeja': True,
+        'detalle_workflow': True,
         'admin': False
     }
 }

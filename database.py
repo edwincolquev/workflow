@@ -65,6 +65,18 @@ def init_db():
             conn.execute(text("ALTER TABLE wf_instance ADD COLUMN internal_code VARCHAR(50);"))
         except Exception:
             pass
+
+        # 4. Add template_file_name to wf_node
+        try:
+            conn.execute(text("ALTER TABLE wf_node ADD COLUMN template_file_name VARCHAR(255);"))
+        except Exception:
+            pass
+
+        # 5. Add template_file_path to wf_node
+        try:
+            conn.execute(text("ALTER TABLE wf_node ADD COLUMN template_file_path VARCHAR(500);"))
+        except Exception:
+            pass
         
         # In SQLAlchemy 2.x, commit connection context to persist ALTER TABLE
         try:

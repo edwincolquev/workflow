@@ -51,6 +51,8 @@ class WorkflowNode(Base):
     description = Column(Text, nullable=True)
     sla_hours = Column(Integer, nullable=True)
     role_id = Column(Integer, ForeignKey('wf_role.id', ondelete='SET NULL'), nullable=True)
+    template_file_name = Column(String(255), nullable=True)
+    template_file_path = Column(String(500), nullable=True)
 
     process = relationship('WorkflowProcess', back_populates='nodes')
     role = relationship('WorkflowRole')

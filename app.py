@@ -147,85 +147,269 @@ if "token" in st.query_params:
                 st.error("❌ Transición no válida para el estado actual de la tarea. La configuración del proceso puede haber cambiado.")
                 st.stop()
                 
+            # ── Page Header ─────────────────────────────────────────────────────────
+            inst = task.instance
+            UIHelpers.apply_custom_css()
             st.markdown("<h2 class='main-header'>⚡ Confirmación de Aprobación vía Email</h2>", unsafe_allow_html=True)
-            st.markdown(f"##### Instancia: **{task.instance.title}**")
-            st.info(f"**Etapa Actual:** {task.node.name} | **Usuario:** {user.full_name} ({user.roles[0].name if user.roles else 'Sin Rol'})")
             
-            # Form block
-            with st.form(key="email_landing_confirmation_form"):
-                comment_input = st.text_area(
-                    "Justificación / Comentario (Requerido):", 
-                    value=comment_param, 
-                    placeholder="Escriba obligatoriamente un comentario o justificación para el avance..."
+            # Instance summary card
+            code_display = inst.internal_code or f"#{inst.id}"
+            st.markdown(f"""
+            <div class="glass-card" style="padding: 16px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div>
+                        <div style="font-size: 0.78rem; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.5px;">Instancia</div>
+                        <div style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin-top: 2px;">{inst.title}</div>
+                        <div style="font-size: 0.85rem; color: #64748b; margin-top: 4px;">
+                            Proceso: <b>{inst.process.name}</b> &nbsp;|&nbsp; Código: <b>{code_display}</b>
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 0.78rem; text-transform: uppercase; color: #94a3b8;">Etapa Actual</div>
+                        <span style="background:#fef3c7;color:#b45309;padding:4px 10px;border-radius:5px;font-weight:700;font-size:0.9rem;">{task.node.name}</span>
+                        <div style="font-size: 0.82rem; color: #64748b; margin-top: 4px;">👤 {user.full_name} ({user.roles[0].name if user.roles else 'Sin Rol'})</div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # ── Section 1: ERP Data & DocNum Editor ─────────────────────────────────
+            st.markdown("<div class='section-header'>📦 Documento ERP (SAP B1)</div>", unsafe_allow_html=True)
+            
+            # Inline DocNum editor (outside form so it can submit independently)
+            current_docnum = inst.docnum or ""
+            col_dn1, col_dn2 = st.columns([3, 1])
+            with col_dn1:
+                new_docnum_input = st.text_input(
+                    "DocNum (Número de Documento SAP B1):",
+                    value=current_docnum,
+                    placeholder="Ej. 10045",
+                    key="landing_docnum_input"
                 )
-                
-                uploaded_file = st.file_uploader("Adjuntar archivo / documento (Opcional):", key="email_approval_uploader")
-                
-                submit_btn = st.form_submit_button("Confirmar y Avanzar Etapa", type="primary")
-                
-            if submit_btn:
-                if not comment_input.strip():
-                    st.error("❌ El comentario o justificación es obligatorio para avanzar la tarea.")
-                else:
-                    # Process transition
-                    comment_text = comment_input.strip() + " (Resolución vía email)"
-                    
-                    # Process attachment if uploaded
-                    if uploaded_file is not None:
-                        UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
-                        timestamp_prefix = datetime.now().strftime("%Y%m%d%H%M%S")
-                        safe_filename = f"{timestamp_prefix}_{uploaded_file.name.replace(' ', '_')}"
-                        dest_path = os.path.join(UPLOAD_DIR, safe_filename)
-                        
-                        with open(dest_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
-                            
-                        new_attach = WorkflowAttachment(
-                            instance_id=task.instance_id,
-                            task_id=task.id,   # Link to active task for forwarding
+            with col_dn2:
+                st.write("")
+                st.write("")
+                save_docnum_btn = st.button("💾 Guardar DocNum", key="landing_save_docnum", use_container_width=True)
+            
+            if save_docnum_btn:
+                if new_docnum_input.strip() and new_docnum_input.strip() != current_docnum:
+                    try:
+                        inst.docnum = new_docnum_input.strip()
+                        inst.external_ref = f"DocNum:{new_docnum_input.strip()}"
+                        inst.updated_at = datetime.utcnow()
+                        db.add(WorkflowHistory(
+                            instance_id=inst.id,
+                            source_node_id=inst.current_node_id,
+                            target_node_id=inst.current_node_id,
                             user_id=user.id,
-                            file_name=uploaded_file.name,
-                            file_path=dest_path,  # Full absolute path
-                            file_size=uploaded_file.size,
-                            created_at=datetime.utcnow()
-                        )
-                        db.add(new_attach)
-                        
-                        history_file = WorkflowHistory(
-                            instance_id=task.instance_id,
-                            task_id=task.id,
-                            source_node_id=None,
-                            target_node_id=None,
-                            user_id=user.id,
-                            action='ATTACHMENT',
-                            comment=f"Archivo cargado vía email-landing: '{uploaded_file.name}'",
+                            action='UPDATE_DOCNUM',
+                            comment=f"DocNum actualizado a '{new_docnum_input.strip()}' vía email-landing.",
                             timestamp=datetime.utcnow()
-                        )
-                        db.add(history_file)
-                        
-                    # Execute transition
-                    WorkflowEngine.execute_transition(
-                        db=db,
-                        instance_id=task.instance_id,
-                        transition_id=transition.id,
-                        user_id=user.id,
-                        comment_text=comment_text
-                    )
-                    
-                    st.balloons()
-                    st.success(f"🎉 ¡Tarea procesada con éxito! La importación/ítem ha avanzado en el flujo operacional.")
-                    st.info(f"""
-                    **Resumen de la Transición:**
-                    * **Flujo:** {task.instance.title}
-                    * **Etapa Completada:** {task.node.name}
-                    * **Comentario registrado:** "{comment_text}"
-                    * **Ejecutado por:** {user.full_name}
-                    """)
-                    
-                    if st.button("Ir al Portal"):
-                        st.query_params.clear()
+                        ))
+                        db.commit()
+                        st.success(f"DocNum actualizado a **{new_docnum_input.strip()}**.")
                         st.rerun()
-                        
+                    except Exception as e:
+                        st.error(f"Error al guardar DocNum: {str(e)}")
+                elif not new_docnum_input.strip():
+                    st.warning("Ingrese un valor de DocNum válido.")
+                else:
+                    st.info("El DocNum ingresado es igual al actual.")
+
+            # ERP document detail panel
+            active_docnum = inst.docnum
+            if active_docnum:
+                try:
+                    from services.data_loader import DataLoaderService
+                    df_erp = DataLoaderService.get_sap_document_details(db, active_docnum)
+                    if not df_erp.empty:
+                        first_row = df_erp.iloc[0]
+                        c_e1, c_e2, c_e3 = st.columns(3)
+                        with c_e1:
+                            st.metric("Número SAP B1", str(first_row.get('Número SAP', active_docnum)))
+                        with c_e2:
+                            st.metric("Proveedor", str(first_row.get('Nombre Proveedor', '—')))
+                        with c_e3:
+                            monto = first_row.get('Monto Total USD', 0)
+                            try:
+                                st.metric("Total Documento", f"${float(monto):,.2f} USD")
+                            except Exception:
+                                st.metric("Total Documento", str(monto))
+                        st.markdown("**Detalle de Partidas:**")
+                        cols_to_show = [c for c in ['Código Artículo', 'Descripción', 'Cantidad Solicitada', 'Cantidad Pendiente', 'Precio Unitario'] if c in df_erp.columns]
+                        st.dataframe(df_erp[cols_to_show], use_container_width=True, hide_index=True)
+                    else:
+                        st.info(f"No se encontraron partidas activas en el ERP para el documento #{active_docnum}.")
+                except Exception as erp_ex:
+                    st.warning(f"No se pudo cargar la información del ERP: {str(erp_ex)}")
+            else:
+                st.info("💡 No hay DocNum registrado. Puede ingresarlo en el campo de arriba.")
+
+            st.markdown("---")
+
+            # ── Section 2: Node Instructions ────────────────────────────────────────
+            node_desc = task.node.description or ""
+            if node_desc.strip():
+                st.markdown(f"""
+                <div style="background:#eff6ff;border-left:4px solid #3b82f6;padding:12px 14px;
+                             border-radius:0 6px 6px 0;margin-bottom:16px;">
+                    <p style="margin:0 0 4px 0;font-size:12px;font-weight:bold;color:#1d4ed8;
+                               text-transform:uppercase;letter-spacing:0.5px;">📋 Instrucciones de la Etapa</p>
+                    <p style="margin:0;font-size:13px;color:#1e3a5f;line-height:1.6;">
+                        {node_desc.replace(chr(10), '<br>')}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # ── Section 3: Confirmation Form ─────────────────────────────────────────
+            st.markdown("<div class='section-header'>✅ Confirmar Acción de la Tarea</div>", unsafe_allow_html=True)
+
+            submitted_key = f"email_landing_submitted_{task.id}"
+
+            if not st.session_state.get(submitted_key, False):
+                with st.form(key="email_landing_confirmation_form"):
+                    comment_input = st.text_area(
+                        "Justificación / Comentario (Requerido):",
+                        value=comment_param,
+                        height=100,
+                        placeholder="Escriba un comentario o justificación obligatorio para avanzar..."
+                    )
+                    uploaded_file = st.file_uploader("Adjuntar archivo / documento (Opcional):", key="email_approval_uploader")
+                    submit_btn = st.form_submit_button(
+                        f"✅ Confirmar: {transition.action_name}",
+                        type="primary",
+                        use_container_width=True
+                    )
+
+                if submit_btn:
+                    if not comment_input.strip():
+                        st.error("❌ El comentario o justificación es obligatorio para avanzar la tarea.")
+                    else:
+                        comment_text = comment_input.strip() + " (Resolución vía email)"
+                        if uploaded_file is not None:
+                            UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+                            timestamp_prefix = datetime.now().strftime("%Y%m%d%H%M%S")
+                            safe_filename = f"{timestamp_prefix}_{uploaded_file.name.replace(' ', '_')}"
+                            dest_path = os.path.join(UPLOAD_DIR, safe_filename)
+                            with open(dest_path, "wb") as f:
+                                f.write(uploaded_file.getbuffer())
+                            db.add(WorkflowAttachment(
+                                instance_id=task.instance_id,
+                                task_id=task.id,
+                                user_id=user.id,
+                                file_name=uploaded_file.name,
+                                file_path=dest_path,
+                                file_size=uploaded_file.size,
+                                created_at=datetime.utcnow()
+                            ))
+                            db.add(WorkflowHistory(
+                                instance_id=task.instance_id,
+                                task_id=task.id,
+                                source_node_id=None,
+                                target_node_id=None,
+                                user_id=user.id,
+                                action='ATTACHMENT',
+                                comment=f"Archivo cargado vía email-landing: '{uploaded_file.name}'",
+                                timestamp=datetime.utcnow()
+                            ))
+                        WorkflowEngine.execute_transition(
+                            db=db,
+                            instance_id=task.instance_id,
+                            transition_id=transition.id,
+                            user_id=user.id,
+                            comment_text=comment_text
+                        )
+                        st.session_state[submitted_key] = True
+                        st.session_state[f"email_landing_completed_node_{task.id}"] = task.node.name
+                        st.session_state[f"email_landing_comment_{task.id}"] = comment_text
+                        st.session_state[f"email_landing_instance_id_{task.id}"] = task.instance_id
+                        st.balloons()
+                        st.rerun()
+            else:
+                # ── Post-confirmation: Success card + Full History Table ──────────────
+                completed_node = st.session_state.get(f"email_landing_completed_node_{task.id}", "—")
+                completed_comment = st.session_state.get(f"email_landing_comment_{task.id}", "—")
+                completed_instance_id = st.session_state.get(f"email_landing_instance_id_{task.id}", task.instance_id)
+
+                st.success(f"🎉 ¡Tarea **{completed_node}** confirmada y cerrada con éxito!")
+
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    st.markdown(f"""
+                    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;">
+                        <div style="font-size:0.78rem;color:#16a34a;text-transform:uppercase;font-weight:700;">Etapa Cerrada</div>
+                        <div style="font-size:1rem;font-weight:700;color:#15803d;margin-top:2px;">{completed_node}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col_s2:
+                    st.markdown(f"""
+                    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;">
+                        <div style="font-size:0.78rem;color:#16a34a;text-transform:uppercase;font-weight:700;">Ejecutado por</div>
+                        <div style="font-size:1rem;font-weight:700;color:#15803d;margin-top:2px;">{user.full_name}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-top:10px;">
+                    <span style="font-size:0.82rem;color:#64748b;font-weight:600;">💬 Comentario registrado:</span>
+                    <p style="margin:4px 0 0 0;color:#1e293b;font-style:italic;">"{completed_comment}"</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ── Full Process History ──────────────────────────────────────────────
+                st.markdown("---")
+                st.markdown("<div class='section-header'>📜 Historial Completo del Proceso</div>", unsafe_allow_html=True)
+
+                history_records = db.query(WorkflowHistory).filter(
+                    WorkflowHistory.instance_id == completed_instance_id
+                ).order_by(WorkflowHistory.timestamp.asc()).all()
+
+                if history_records:
+                    fresh_inst = db.query(WorkflowInstance).filter(WorkflowInstance.id == completed_instance_id).first()
+                    if fresh_inst:
+                        final_status = fresh_inst.status
+                        status_color = {"ACTIVE": "#3b82f6", "COMPLETED": "#10b981", "CANCELLED": "#ef4444"}.get(final_status, "#94a3b8")
+                        status_label = {"ACTIVE": "ACTIVO", "COMPLETED": "COMPLETADO", "CANCELLED": "CANCELADO"}.get(final_status, final_status)
+                        next_stage = f"&nbsp; → Próxima etapa: <b>{fresh_inst.current_node.name}</b>" if fresh_inst.current_node and final_status == 'ACTIVE' else ""
+                        st.markdown(f"""
+                        <div style="margin-bottom:14px;">
+                            Estado del flujo:
+                            <span style="background:{status_color};color:white;padding:3px 10px;border-radius:12px;font-size:0.82rem;font-weight:700;">{status_label}</span>
+                            {next_stage}
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    action_labels = {
+                        'CREATE': '🚀 Creación', 'TRANSITION': '▶ Transición',
+                        'COMMENT': '💬 Comentario', 'ATTACHMENT': '📎 Adjunto',
+                        'REOPEN': '🔄 Reapertura', 'CANCEL': '❌ Cancelación',
+                        'UPDATE_DOCNUM': '🔢 DocNum',
+                    }
+                    import pandas as pd
+                    hist_data = []
+                    for h in history_records:
+                        src = h.source_node.name if h.source_node else "—"
+                        tgt = h.target_node.name if h.target_node else "—"
+                        tr_str = f"{src} → {tgt}" if src != "—" and tgt != "—" and src != tgt else (src if src != "—" else "—")
+                        hist_data.append({
+                            "Fecha/Hora": h.timestamp.strftime("%Y-%m-%d %H:%M"),
+                            "Usuario": h.user.full_name,
+                            "Acción": action_labels.get(h.action, h.action),
+                            "Transición": tr_str,
+                            "Comentario": (h.comment or "")[:120] + ("…" if h.comment and len(h.comment) > 120 else "")
+                        })
+                    st.dataframe(pd.DataFrame(hist_data), use_container_width=True, hide_index=True)
+                else:
+                    st.info("No hay registros de historial disponibles.")
+
+                st.markdown("---")
+                if st.button("🏠 Ir al Portal de Control Operacional", use_container_width=True, type="primary"):
+                    st.query_params.clear()
+                    for k in [submitted_key, f"email_landing_completed_node_{task.id}",
+                               f"email_landing_comment_{task.id}", f"email_landing_instance_id_{task.id}"]:
+                        st.session_state.pop(k, None)
+                    st.rerun()
+
         except Exception as ex:
             st.error(f"❌ Error al procesar la transición: {str(ex)}")
             
@@ -284,11 +468,11 @@ else:
 
     # Welcome landing page
     st.markdown("<h1 class='main-header'>🏢 Portal de Control Operacional</h1>", unsafe_allow_html=True)
-    st.markdown("### Bienvenido al Sistema Integrado de Análisis y Workflow")
+    st.markdown("### Bienvenido al Sistema Integrado de Gestión de Workflows")
     
     st.write(
-        "Utilice la barra lateral para navegar a través de los diferentes módulos analíticos "
-        "y bandejas de workflow operacional según sus permisos."
+        "Utilice la barra lateral para navegar a través de los diferentes módulos del motor "
+        "de workflows operacionales y paneles de control según sus permisos."
     )
 
     st.markdown("---")
@@ -298,17 +482,17 @@ else:
     with c1:
         st.markdown("""
         <div class="glass-card" style="min-height: 180px;">
-            <h4 style="color:#0f172a; margin-top:0;">📊 Sección de Análisis (Dashboards)</h4>
-            <p style="color:#475569; font-size:0.9rem;">Consulte KPIs ejecutivos, estados de tránsito SAP B1, cobertura de stock, excesos, discontinuados y quiebres de artículos.</p>
-            <p style="font-size: 0.8rem; color:#64748b;"><i>Mapeado directamente con SQL Server / SAP B1.</i></p>
+            <h4 style="color:#0f172a; margin-top:0;">📊 Analítica de Procesos (Dashboard)</h4>
+            <p style="color:#475569; font-size:0.9rem;">Consulte KPIs operativos, tiempos promedio de ciclo por etapa, cumplimiento de SLAs y balance de carga de trabajo por rol.</p>
+            <p style="font-size: 0.8rem; color:#64748b;"><i>Métricas automáticas basadas en el historial del motor.</i></p>
         </div>
         """, unsafe_allow_html=True)
         
     with c2:
         st.markdown("""
         <div class="glass-card" style="min-height: 180px;">
-            <h4 style="color:#0f172a; margin-top:0;">🚢 Sección de Operación (Workflow Engine)</h4>
-            <p style="color:#475569; font-size:0.9rem;">Acceda a su bandeja personal de tareas pendientes, verifique comentarios, suba documentos y avance los tránsitos o items nuevos por la matriz de transición.</p>
-            <p style="font-size: 0.8rem; color:#64748b;"><i>Orquestador de procesos autónomo en SQLite.</i></p>
+            <h4 style="color:#0f172a; margin-top:0;">🚢 Gestión y Operación de Tareas (Bandeja)</h4>
+            <p style="color:#475569; font-size:0.9rem;">Acceda a su bandeja personal de tareas pendientes, inicie flujos de trabajo, asigne documentos y cargue soportes o plantillas para avanzar las transiciones.</p>
+            <p style="font-size: 0.8rem; color:#64748b;"><i>Orquestador de procesos autónomo en SQLite y conexión ERP.</i></p>
         </div>
         """, unsafe_allow_html=True)

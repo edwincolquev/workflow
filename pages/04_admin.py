@@ -341,6 +341,7 @@ with get_db() as db:
                         'Tipo': n.type,
                         'Rol Responsable': n.role.name if n.role else "Ninguno",
                         'SLA (Horas)': n.sla_hours or "Sin SLA",
+                        'Plantilla Base': n.template_file_name or "Sin plantilla",
                         'Descripción': n.description or "Sin descripción"
                     })
                 st.dataframe(pd.DataFrame(nodes_df_list), use_container_width=True, hide_index=True)
@@ -353,8 +354,9 @@ with get_db() as db:
                     n_name = st.text_input("Nombre del Nodo", placeholder="Aduana")
                     n_type = st.selectbox("Tipo de Nodo", ['START', 'TASK', 'DECISION', 'GATEWAY', 'NOTIFICATION', 'END'])
                     n_role = st.selectbox("Rol Responsable (Obligatorio para TASK, DECISION y NOTIFICATION)", options=[0] + list(role_map.keys()), format_func=lambda x: role_map[x] if x != 0 else "Ninguno")
-                    n_desc = st.text_input("Descripción breve")
+                    n_desc = st.text_area("Instrucciones detalladas de la tarea (se enviarán por correo)", height=120)
                     n_sla = st.number_input("Horas de SLA (Tiempo estimado de ejecución, 0 = Sin SLA)", min_value=0, value=0, step=1)
+                    n_template = st.file_uploader("Subir Plantilla Base (Ej. Excel vacío para completar)", key="add_node_template_upload")
                     
                     if st.form_submit_button("Guardar Nuevo Nodo"):
                         if not n_name.strip():
@@ -362,6 +364,22 @@ with get_db() as db:
                         elif n_type in ['TASK', 'DECISION', 'NOTIFICATION'] and n_role == 0:
                             st.error(f"El nodo tipo '{n_type}' requiere obligatoriamente un Rol Responsable.")
                         else:
+                            import os
+                            from datetime import datetime
+                            
+                            t_name = None
+                            t_path = None
+                            if n_template is not None:
+                                TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads', 'node_templates')
+                                os.makedirs(TEMPLATE_DIR, exist_ok=True)
+                                timestamp_prefix = datetime.now().strftime("%Y%m%d%H%M%S")
+                                safe_filename = f"{timestamp_prefix}_{n_template.name.replace(' ', '_')}"
+                                dest_path = os.path.join(TEMPLATE_DIR, safe_filename)
+                                with open(dest_path, "wb") as f:
+                                    f.write(n_template.getbuffer())
+                                t_name = n_template.name
+                                t_path = dest_path
+
                             sla_val = n_sla if n_sla > 0 else None
                             new_node = WorkflowNode(
                                 process_id=selected_proc_p.id,
@@ -369,7 +387,9 @@ with get_db() as db:
                                 type=n_type,
                                 role_id=n_role if n_role != 0 else None,
                                 description=n_desc.strip(),
-                                sla_hours=sla_val
+                                sla_hours=sla_val,
+                                template_file_name=t_name,
+                                template_file_path=t_path
                             )
                             db.add(new_node)
                             db.commit()
@@ -390,6 +410,18 @@ with get_db() as db:
                     edit_node = db.query(WorkflowNode).filter(WorkflowNode.id == edit_node_id).first() if edit_node_id else None
                     
                     if edit_node:
+                        import os
+                        if edit_node.template_file_name:
+                            st.info(f"📎 **Plantilla cargada actual:** `{edit_node.template_file_name}`")
+                            if os.path.exists(edit_node.template_file_path or ""):
+                                with open(edit_node.template_file_path, "rb") as f:
+                                    st.download_button(
+                                        label="⬇️ Descargar plantilla actual",
+                                        data=f.read(),
+                                        file_name=edit_node.template_file_name,
+                                        key=f"dl_template_{edit_node.id}"
+                                    )
+                                    
                         with st.form("edit_node_form"):
                             en_name = st.text_input("Nombre del Nodo", value=edit_node.name)
                             en_types = ['START', 'TASK', 'DECISION', 'GATEWAY', 'NOTIFICATION', 'END']
@@ -401,20 +433,55 @@ with get_db() as db:
                                 format_func=lambda x: role_map[x] if x != 0 else "Ninguno",
                                 index=0 if not edit_node.role_id else list(role_map.keys()).index(edit_node.role_id) + 1
                             )
-                            en_desc = st.text_input("Descripción", value=edit_node.description or "")
+                            en_desc = st.text_area("Instrucciones detalladas de la tarea (se enviarán por correo)", value=edit_node.description or "", height=120)
                             en_sla = st.number_input("Horas de SLA (Tiempo estimado de ejecución, 0 = Sin SLA)", min_value=0, value=edit_node.sla_hours or 0, step=1)
                             
+                            en_template = st.file_uploader("Reemplazar Plantilla Base (Opcional)", key=f"edit_template_{edit_node.id}")
+                            
+                            remove_template = False
+                            if edit_node.template_file_name:
+                                remove_template = st.checkbox("Eliminar plantilla actual")
+                                
                             if st.form_submit_button("Actualizar Nodo"):
                                 if not en_name.strip():
                                     st.error("El nombre no puede estar vacío.")
                                 elif en_type in ['TASK', 'DECISION', 'NOTIFICATION'] and en_role == 0:
                                     st.error(f"El nodo tipo '{en_type}' requiere obligatoriamente un Rol Responsable.")
                                 else:
+                                    from datetime import datetime
                                     edit_node.name = en_name.strip()
                                     edit_node.type = en_type
                                     edit_node.role_id = en_role if en_role != 0 else None
                                     edit_node.description = en_desc.strip()
                                     edit_node.sla_hours = en_sla if en_sla > 0 else None
+                                    
+                                    if remove_template:
+                                        if edit_node.template_file_path and os.path.exists(edit_node.template_file_path):
+                                            try:
+                                                os.remove(edit_node.template_file_path)
+                                            except:
+                                                pass
+                                        edit_node.template_file_name = None
+                                        edit_node.template_file_path = None
+                                        
+                                    if en_template is not None:
+                                        # Delete old file
+                                        if edit_node.template_file_path and os.path.exists(edit_node.template_file_path):
+                                            try:
+                                                os.remove(edit_node.template_file_path)
+                                            except:
+                                                pass
+                                                
+                                        TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads', 'node_templates')
+                                        os.makedirs(TEMPLATE_DIR, exist_ok=True)
+                                        timestamp_prefix = datetime.now().strftime("%Y%m%d%H%M%S")
+                                        safe_filename = f"{timestamp_prefix}_{en_template.name.replace(' ', '_')}"
+                                        dest_path = os.path.join(TEMPLATE_DIR, safe_filename)
+                                        with open(dest_path, "wb") as f:
+                                            f.write(en_template.getbuffer())
+                                        edit_node.template_file_name = en_template.name
+                                        edit_node.template_file_path = dest_path
+                                        
                                     db.commit()
                                     st.success(f"Nodo '{en_name}' actualizado.")
                                     st.rerun()

@@ -4,7 +4,8 @@ import hashlib
 from database import get_db
 from models import (
     WorkflowProcess, WorkflowNode, WorkflowTransition, 
-    WorkflowUser, WorkflowRole, WorkflowInstance, WorkflowTask
+    WorkflowUser, WorkflowRole, WorkflowInstance, WorkflowTask,
+    WorkflowEmailLog
 )
 from components.ui_helpers import UIHelpers
 from config.settings import ROLE_ACCESS
@@ -31,8 +32,8 @@ st.markdown("<h1 class='main-header'>⚙️ Configuración & Administración</h1
 st.markdown("<p style='color: #64748b;'>Configure el motor de workflow, valide la estructura lógica de los procesos, gestione la matriz de transiciones y cuentas de usuario.</p>", unsafe_allow_html=True)
 
 # Tabs
-t_transitions, t_processes, t_users = st.tabs([
-    "🔀 Matriz de Transiciones", "📋 Procesos y Nodos", "👥 Usuarios y Roles"
+t_transitions, t_processes, t_users, t_email_audit = st.tabs([
+    "🔀 Matriz de Transiciones", "📋 Procesos y Nodos", "👥 Usuarios y Roles", "✉️ Auditoría de Correos"
 ])
 
 def generate_mermaid(nodes, transitions):
@@ -340,7 +341,7 @@ with get_db() as db:
                         'Nombre Etapa': n.name,
                         'Tipo': n.type,
                         'Rol Responsable': n.role.name if n.role else "Ninguno",
-                        'SLA (Horas)': n.sla_hours or "Sin SLA",
+                        'SLA (Días)': f"{n.sla_hours} días" if n.sla_hours else "Sin SLA",
                         'Plantilla Base': n.template_file_name or "Sin plantilla",
                         'Descripción': n.description or "Sin descripción"
                     })
@@ -355,7 +356,7 @@ with get_db() as db:
                     n_type = st.selectbox("Tipo de Nodo", ['START', 'TASK', 'DECISION', 'GATEWAY', 'NOTIFICATION', 'END'])
                     n_role = st.selectbox("Rol Responsable (Obligatorio para TASK, DECISION y NOTIFICATION)", options=[0] + list(role_map.keys()), format_func=lambda x: role_map[x] if x != 0 else "Ninguno")
                     n_desc = st.text_area("Instrucciones detalladas de la tarea (se enviarán por correo)", height=120)
-                    n_sla = st.number_input("Horas de SLA (Tiempo estimado de ejecución, 0 = Sin SLA)", min_value=0, value=0, step=1)
+                    n_sla = st.number_input("SLA en Días (Tiempo estimado de ejecución, 0 = Sin SLA)", min_value=0, value=0, step=1)
                     n_template = st.file_uploader("Subir Plantilla Base (Ej. Excel vacío para completar)", key="add_node_template_upload")
                     
                     if st.form_submit_button("Guardar Nuevo Nodo"):
@@ -434,7 +435,7 @@ with get_db() as db:
                                 index=0 if not edit_node.role_id else list(role_map.keys()).index(edit_node.role_id) + 1
                             )
                             en_desc = st.text_area("Instrucciones detalladas de la tarea (se enviarán por correo)", value=edit_node.description or "", height=120)
-                            en_sla = st.number_input("Horas de SLA (Tiempo estimado de ejecución, 0 = Sin SLA)", min_value=0, value=edit_node.sla_hours or 0, step=1)
+                            en_sla = st.number_input("SLA en Días (Tiempo estimado de ejecución, 0 = Sin SLA)", min_value=0, value=edit_node.sla_hours or 0, step=1)
                             
                             en_template = st.file_uploader("Reemplazar Plantilla Base (Opcional)", key=f"edit_template_{edit_node.id}")
                             
@@ -690,3 +691,137 @@ with get_db() as db:
                         db.commit()
                         st.success(f"Descripción del rol '{edit_role.name}' actualizada.")
                         st.rerun()
+
+    # ==========================================
+    # TAB 4: AUDITORÍA DE CORREOS
+    # ==========================================
+    with t_email_audit:
+        st.markdown("<div class='section-header'>✉️ Registro de Auditoría de Correos Electrónicos</div>", unsafe_allow_html=True)
+        st.markdown("<p style='color: #64748b;'>Visualice y audite todos los correos electrónicos generados por el motor de workflow, incluyendo notificaciones de asignación y comprobantes de resolución.</p>", unsafe_allow_html=True)
+
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            f_code = st.text_input("Filtrar por Código o Título de Instancia (ej. WF-0005):", key="email_audit_code_filter")
+        with col_f2:
+            f_recipient = st.text_input("Filtrar por Destinatario (Email):", key="email_audit_recipient_filter")
+        with col_f3:
+            f_status = st.selectbox("Filtrar por Estado:", ["Todos", "SENT", "SIMULATED", "FAILED"], key="email_audit_status_filter")
+
+        query = db.query(WorkflowEmailLog).join(WorkflowEmailLog.instance)
+
+        if f_code.strip():
+            code_clean = f_code.strip()
+            query = query.filter(
+                (WorkflowInstance.internal_code.like(f"%{code_clean}%")) |
+                (WorkflowInstance.title.like(f"%{code_clean}%"))
+            )
+
+        if f_recipient.strip():
+            query = query.filter(WorkflowEmailLog.recipient.like(f"%{f_recipient.strip()}%"))
+
+        if f_status != "Todos":
+            query = query.filter(WorkflowEmailLog.status == f_status)
+
+        logs = query.order_by(WorkflowEmailLog.sent_at.desc()).all()
+
+        if not logs:
+            st.info("No se encontraron registros de correos que coincidan con los filtros.")
+        else:
+            # Prepare dataframe for display
+            log_data = []
+            for log in logs:
+                log_data.append({
+                    "ID": log.id,
+                    "Instancia": f"{log.instance.internal_code or 'N/A'} - {log.instance.title}",
+                    "Fecha/Hora": log.sent_at.strftime("%Y-%m-%d %H:%M"),
+                    "Destinatario": log.recipient,
+                    "Asunto": log.subject,
+                    "Estado": log.status,
+                    "Detalles": (log.error_message or "—")[:60] + ("..." if log.error_message and len(log.error_message) > 60 else "")
+                })
+            df_logs = pd.DataFrame(log_data)
+            st.dataframe(df_logs, use_container_width=True, hide_index=True)
+
+            st.markdown("##### 🔍 Seleccione un Correo para Inspección de Contenido")
+            selected_log_id = st.selectbox(
+                "Seleccione Correo por ID / Asunto:",
+                options=[l.id for l in logs],
+                format_func=lambda x: f"ID {x} | {next(f'{l.recipient} - {l.subject}' for l in logs if l.id == x)}",
+                key="email_audit_selected_id"
+            )
+
+            selected_log = db.query(WorkflowEmailLog).filter(WorkflowEmailLog.id == selected_log_id).first() if selected_log_id else None
+
+            if selected_log:
+                st.markdown("---")
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    st.markdown(f"**De:** `{selected_log.sender}`")
+                    st.markdown(f"**Para:** `{selected_log.recipient}`")
+                    st.markdown(f"**Fecha:** {selected_log.sent_at.strftime('%Y-%m-%d %H:%M:%S')}")
+                with col_d2:
+                    st.markdown(f"**Asunto:** `{selected_log.subject}`")
+                    status_color = {"SENT": "green", "SIMULATED": "blue", "FAILED": "red"}.get(selected_log.status, "grey")
+                    st.markdown(f"**Estado:** :{status_color}[{selected_log.status}]")
+                    if selected_log.error_message:
+                        st.markdown(f"**Detalles Técnicos / Ruta:** `{selected_log.error_message}`")
+
+                # Show attachments if any
+                if selected_log.attachments_json:
+                    import json
+                    try:
+                        atts = json.loads(selected_log.attachments_json)
+                        if atts:
+                            st.markdown("**📎 Archivos Adjuntos Enviados:**")
+                            for a in atts:
+                                st.markdown(f"- 📄 `{a.get('filename')}` ({a.get('size', 0) / 1024:.1f} KB)")
+                    except Exception:
+                        pass
+
+                st.markdown("---")
+                st.markdown("**Visualización del Correo (Formato HTML):**")
+                
+                # Recalculate SLA progress bar dynamically using current date
+                html_content = selected_log.body_html
+                if 'class="sla-progress-container"' in html_content:
+                    import re
+                    from datetime import datetime, timedelta
+                    
+                    pattern = r'<div class="sla-progress-container"\s+data-created-at="([^"]+)"\s+data-sla-hours="(\d+)"[^>]*>.*?<!-- END_SLA_PROGRESS_BAR -->'
+                    match = re.search(pattern, html_content, re.DOTALL)
+                    if match:
+                        created_str = match.group(1)
+                        sla_days = int(match.group(2))
+                        try:
+                            created_dt = datetime.strptime(created_str, '%Y-%m-%d %H:%M:%S')
+                            now_utc = datetime.utcnow()
+                            elapsed_h = (now_utc - created_dt).total_seconds() / 3600
+                            progress_pct = min(100.0, (elapsed_h / (sla_days * 24.0) * 100.0))
+                            elapsed_days = elapsed_h / 24
+                            sla_days_disp = sla_days
+                            bar_color = "#ef4444" if elapsed_h > (sla_days * 24.0) else ("#f59e0b" if progress_pct > 75 else "#10b981")
+                            
+                            c_str = created_dt.strftime('%Y-%m-%d')
+                            d_str = (created_dt + timedelta(days=sla_days)).strftime('%Y-%m-%d')
+                            
+                            updated_progress_html = f"""<div class="sla-progress-container" 
+                  data-created-at="{created_str}" 
+                  data-sla-hours="{sla_days}" 
+                  style="margin: 15px 0; padding: 12px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-family: Arial, sans-serif;">
+                 <div style="display: flex; justify-content: space-between; font-size: 12px; color: #475569; margin-bottom: 5px;">
+                     <span><b>Progreso de SLA (Dinámico):</b> <span class="sla-days-text">{elapsed_days:.1f}d / {sla_days_disp:.1f}d días transcurridos</span></span>
+                     <span class="sla-pct-text" style="font-weight: bold; color: {bar_color};">{progress_pct:.1f}%</span>
+                 </div>
+                 <div style="background-color: #e2e8f0; border-radius: 4px; height: 12px; width: 100%; overflow: hidden;">
+                     <div class="sla-bar-fill" style="background-color: {bar_color}; height: 12px; width: {progress_pct:.1f}%; border-radius: 4px; transition: width 0.3s ease;"></div>
+                 </div>
+                 <div style="display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; margin-top: 4px;">
+                     <span>Inicio: {c_str}</span>
+                     <span>Límite (SLA): {d_str}</span>
+                 </div>
+             </div><!-- END_SLA_PROGRESS_BAR -->"""
+                            html_content = re.sub(pattern, updated_progress_html, html_content, flags=re.DOTALL)
+                        except Exception as ex:
+                            pass
+                
+                st.components.v1.html(html_content, height=450, scrolling=True)

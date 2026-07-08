@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 import streamlit as st
 import pandas as pd
 
-from models import WorkflowUser, WorkflowTask, WorkflowTransition, WorkflowInstance, WorkflowNode
+from models import WorkflowUser, WorkflowTask, WorkflowTransition, WorkflowInstance, WorkflowNode, WorkflowEmailLog
 from services.data_loader import DataLoaderService
 from services.export_service import ExportService
 
@@ -32,6 +32,50 @@ try:
                 break
 except:
     pass
+
+def log_email_dispatch(
+    instance_id: int, 
+    task_id: int, 
+    sender: str, 
+    recipient: str, 
+    subject: str, 
+    body_html: str, 
+    attachments: list, 
+    status: str, 
+    error_message: str = None
+):
+    if not instance_id:
+        return
+    try:
+        from database import get_db
+        import json
+        
+        att_list = []
+        if attachments:
+            for att in attachments:
+                att_list.append({
+                    "filename": att.get("filename"),
+                    "size": len(att.get("data", b""))
+                })
+        att_json = json.dumps(att_list) if att_list else None
+        
+        with get_db() as db:
+            log_entry = WorkflowEmailLog(
+                instance_id=instance_id,
+                task_id=task_id,
+                sender=sender,
+                recipient=recipient,
+                subject=subject,
+                body_html=body_html,
+                attachments_json=att_json,
+                sent_at=datetime.utcnow(),
+                status=status,
+                error_message=error_message
+            )
+            db.add(log_entry)
+            db.commit()
+    except Exception as ex:
+        print(f"Failed to log email dispatch: {ex}")
 
 def generate_task_token(task_id: int, transition_id: int, user_id: int, action_name: str = None, ttl_hours: int = 48) -> str:
     """Generates a base64 encoded and HMAC signed token containing workflow task details."""
@@ -250,6 +294,40 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
             count = len(from_attachments)
             fwd_att_note = f"<p style='font-size: 12px; color: #475569;'>📎 Se adjuntan <b>{count}</b> archivo(s) del nodo anterior junto con este correo.</p>"
 
+        # ── SLA Progress Bar HTML generation ─────────────────────────────────────
+        sla_progress_html = ""
+        from datetime import timedelta
+        if task.sla_hours:
+            now_utc = datetime.utcnow()
+            elapsed_h = (now_utc - task.created_at).total_seconds() / 3600
+            progress_pct = min(100.0, (elapsed_h / (task.sla_hours * 24.0) * 100.0))
+            elapsed_days = elapsed_h / 24
+            sla_days = task.sla_hours
+            bar_color = "#ef4444" if elapsed_h > (task.sla_hours * 24.0) else ("#f59e0b" if progress_pct > 75 else "#10b981")
+            
+            created_str = task.created_at.strftime('%Y-%m-%d')
+            due_str = (task.created_at + timedelta(days=task.sla_hours)).strftime('%Y-%m-%d')
+            
+            sla_progress_html = f"""
+            <div class="sla-progress-container" 
+                 data-created-at="{task.created_at.strftime('%Y-%m-%d %H:%M:%S')}" 
+                 data-sla-hours="{task.sla_hours}" 
+                 style="margin: 15px 0; padding: 12px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-family: Arial, sans-serif;">
+                <div style="display: flex; justify-content: space-between; font-size: 12px; color: #475569; margin-bottom: 5px;">
+                    <span><b>Progreso de SLA:</b> <span class="sla-days-text">{elapsed_days:.1f}d / {sla_days:.1f}d días transcurridos</span></span>
+                    <span class="sla-pct-text" style="font-weight: bold; color: {bar_color};">{progress_pct:.1f}%</span>
+                </div>
+                <div style="background-color: #e2e8f0; border-radius: 4px; height: 12px; width: 100%; overflow: hidden;">
+                    <div class="sla-bar-fill" style="background-color: {bar_color}; height: 12px; width: {progress_pct:.1f}%; border-radius: 4px; transition: width 0.3s ease;"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; margin-top: 4px;">
+                    <span>Inicio: {created_str}</span>
+                    <span>Límite (SLA): {due_str}</span>
+                </div>
+            </div>
+            <!-- END_SLA_PROGRESS_BAR -->
+            """
+
         # ── Build full HTML email ──────────────────────────────────────────────
         html_content = f"""
         <html>
@@ -287,6 +365,8 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
                       </tr>
                   </table>
               </div>
+
+              {sla_progress_html}
 
               {node_instructions_html}
               {prev_context_html}
@@ -376,9 +456,11 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
             
         send_email_with_attachments(
             to_email=user.email,
-            subject=f"⚙️ TAREA ASIGNADA: '{task_name}' en {inst.internal_code or inst.title}",
+            subject=f"[{inst.internal_code or f'#{inst.id}'}] {inst.title} '{task_name}' - ASIGNADA",
             html_content=html_content,
-            attachments=email_attachments
+            attachments=email_attachments,
+            instance_id=inst.id,
+            task_id=task.id
         )
 
 def send_info_notification_email(db: Session, instance: WorkflowInstance, node: WorkflowNode, from_comment: str = None, from_attachments: list = None):
@@ -587,16 +669,44 @@ def send_info_notification_email(db: Session, instance: WorkflowInstance, node: 
                 
         send_email_with_attachments(
             to_email=user.email,
-            subject=f"📢 NOTIFICACIÓN: '{node_name}' en {instance.internal_code or instance.title}",
+            subject=f"[{instance.internal_code or f'#{instance.id}'}] {instance.title} NOTIFICACIÓN '{node_name}'",
             html_content=html_content,
-            attachments=email_attachments
+            attachments=email_attachments,
+            instance_id=instance.id,
+            task_id=None
         )
 
-def send_workflow_completed_notification(db: Session, instance: WorkflowInstance):
+def send_workflow_completed_notification(db: Session, instance: WorkflowInstance, from_comment: str = None, from_attachments: list = None):
     """Notifies the workflow instance creator that the instance has reached its end node successfully."""
+    if from_attachments is None:
+        from_attachments = []
+        
     creator = instance.created_by
     if not creator or not creator.email:
         return
+        
+    proc_name = instance.process.name
+    completed_at_str = instance.updated_at.strftime('%Y-%m-%d %H:%M') if instance.updated_at else datetime.now().strftime('%Y-%m-%d %H:%M')
+    
+    # Estandarizar asunto
+    subject = f"[{instance.internal_code or f'#{instance.id}'}] {instance.title} FINALIZADO CON ÉXITO"
+    
+    comment_html = ""
+    if from_comment and from_comment.strip():
+        comment_html = f"""
+        <div style="background-color: #f0fdf4; border-left: 4px solid #10b981; padding: 12px 14px; margin: 15px 0; border-radius: 0 6px 6px 0;">
+            <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: bold; color: #065f46; text-transform: uppercase; letter-spacing: 0.5px;">💬 Comentario / Justificación de Cierre</p>
+            <p style="margin: 0; font-size: 13px; color: #1f2937; line-height: 1.5; font-style: italic;">"{from_comment.strip()}"</p>
+        </div>"""
+        
+    att_list_html = ""
+    if from_attachments:
+        items = "".join(f"<li style='font-size:12px;color:#374151;'>📎 {a.file_name}</li>" for a in from_attachments)
+        att_list_html = f"""
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin: 15px 0;">
+            <p style="margin: 0 0 6px 0; font-size: 12px; font-weight: bold; color: #475569;">Documentos adjuntados en la etapa de cierre:</p>
+            <ul style="margin: 0; padding-left: 18px;">{items}</ul>
+        </div>"""
         
     html_content = f"""
     <html>
@@ -604,7 +714,7 @@ def send_workflow_completed_notification(db: Session, instance: WorkflowInstance
         <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 25px; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
           <div style="border-bottom: 2px solid #10b981; padding-bottom: 12px; margin-bottom: 15px;">
               <h2 style="color: #0f172a; margin: 0; font-size: 18px;">🏁 PROCESO FINALIZADO CON ÉXITO</h2>
-              <p style="margin: 3px 0 0 0; color: #64748b; font-size: 13px;">Flujo: <b>{instance.process.name}</b></p>
+              <p style="margin: 3px 0 0 0; color: #64748b; font-size: 13px;">Flujo: <b>{proc_name}</b></p>
           </div>
           
           <p>Hola <b>{creator.full_name}</b>,</p>
@@ -617,15 +727,22 @@ def send_workflow_completed_notification(db: Session, instance: WorkflowInstance
                       <td style="padding: 3px 0; color: #0f172a; font-weight: bold;">{instance.title}</td>
                   </tr>
                   <tr>
+                      <td style="padding: 3px 0; color: #64748b;"><b>Código:</b></td>
+                      <td style="padding: 3px 0; color: #0f172a;"><code>{instance.internal_code or f'#{instance.id}'}</code></td>
+                  </tr>
+                  <tr>
                       <td style="padding: 3px 0; color: #64748b;"><b>Referencia ERP:</b></td>
                       <td style="padding: 3px 0; color: #0f172a;"><code>{instance.external_ref or 'Ninguna'}</code></td>
                   </tr>
                   <tr>
                       <td style="padding: 3px 0; color: #64748b;"><b>Fecha Finalización:</b></td>
-                      <td style="padding: 3px 0; color: #0f172a;">{instance.updated_at.strftime('%Y-%m-%d %H:%M')}</td>
+                      <td style="padding: 3px 0; color: #0f172a;">{completed_at_str}</td>
                   </tr>
               </table>
           </div>
+          
+          {comment_html}
+          {att_list_html}
           
           <p>Toda la mercadería o ítems asociados han sido plenamente ingresados / habilitados en el stock operativo de la compañía.</p>
           
@@ -637,10 +754,172 @@ def send_workflow_completed_notification(db: Session, instance: WorkflowInstance
       </body>
     </html>
     """
+    
+    email_attachments = []
+    for att in from_attachments:
+        try:
+            if os.path.exists(att.file_path):
+                with open(att.file_path, 'rb') as f:
+                    file_bytes = f.read()
+                ext = os.path.splitext(att.file_name)[1].lower()
+                mime_map = {
+                    '.pdf': 'application/pdf',
+                    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    '.xls': 'application/vnd.ms-excel',
+                    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    '.doc': 'application/msword',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.zip': 'application/zip',
+                    '.csv': 'text/csv',
+                }
+                mime_type = mime_map.get(ext, 'application/octet-stream')
+                email_attachments.append({
+                    "data": file_bytes,
+                    "filename": att.file_name,
+                    "mime_type": mime_type
+                })
+        except Exception as ex:
+            print(f"Could not attach file '{att.file_name}' to final completion notification: {ex}")
+            
     send_email_with_attachments(
         to_email=creator.email,
-        subject=f"🏁 FINALIZADO: Flujo '{instance.title}' completado con éxito",
-        html_content=html_content
+        subject=subject,
+        html_content=html_content,
+        attachments=email_attachments,
+        instance_id=instance.id,
+        task_id=None
+    )
+
+def send_task_completion_email(db: Session, task: WorkflowTask, action_name: str, comment_text: str = None, attachments: list = None):
+    """
+    Sends a task completion receipt email to the user who resolved the task,
+    with CC to the workflow creator.
+    """
+    if attachments is None:
+        attachments = []
+        
+    executor = task.completed_by
+    if not executor or not executor.email:
+        return
+        
+    creator = task.instance.created_by
+    cc_list = []
+    if creator and creator.email and creator.email != executor.email:
+        cc_list.append(creator.email)
+        
+    inst = task.instance
+    proc_name = inst.process.name
+    task_name = task.node.name
+    completed_at_str = task.completed_at.strftime('%Y-%m-%d %H:%M') if task.completed_at else datetime.now().strftime('%Y-%m-%d %H:%M')
+    
+    # Estandarizar asunto
+    subject = f"[{inst.internal_code or f'#{inst.id}'}] {inst.title} '{task_name}' - COMPLETADA"
+    
+    # Build attachments HTML list
+    att_list_html = ""
+    if attachments:
+        items = "".join(f"<li style='font-size:12px;color:#374151;'>📎 {a.file_name}</li>" for a in attachments)
+        att_list_html = f"""
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin: 15px 0;">
+            <p style="margin: 0 0 6px 0; font-size: 12px; font-weight: bold; color: #475569;">Documentos adjuntados en esta etapa:</p>
+            <ul style="margin: 0; padding-left: 18px;">{items}</ul>
+        </div>"""
+        
+    html_content = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #334155; line-height: 1.6; background-color: #f1f5f9; padding: 20px;">
+        <div style="max-width: 620px; margin: 0 auto; background-color: white; padding: 25px; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+          <div style="border-bottom: 2px solid #10b981; padding-bottom: 12px; margin-bottom: 15px;">
+              <h2 style="color: #065f46; margin: 0; font-size: 18px;">✅ CONFIRMACIÓN: Tarea Completada</h2>
+              <p style="margin: 3px 0 0 0; color: #64748b; font-size: 13px;">Proceso: <b>{proc_name}</b></p>
+          </div>
+          
+          <p>Hola <b>{executor.full_name}</b>,</p>
+          <p>Se ha registrado y procesado correctamente tu resolución para la siguiente tarea:</p>
+          
+          <div style="background-color: #f8fafc; border-left: 4px solid #10b981; padding: 12px; margin: 15px 0; border-radius: 0 6px 6px 0;">
+              <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                  <tr>
+                      <td style="padding: 3px 0; color: #64748b; width: 130px;"><b>Instancia:</b></td>
+                      <td style="padding: 3px 0; color: #0f172a; font-weight: bold;">{inst.title}</td>
+                  </tr>
+                  <tr>
+                      <td style="padding: 3px 0; color: #64748b;"><b>Código:</b></td>
+                      <td style="padding: 3px 0; color: #0f172a;"><code>{inst.internal_code or f'#{inst.id}'}</code></td>
+                  </tr>
+                  <tr>
+                      <td style="padding: 3px 0; color: #64748b;"><b>Etapa Resuelta:</b></td>
+                      <td style="padding: 3px 0; color: #0f172a; font-weight: bold;">{task_name}</td>
+                  </tr>
+                  <tr>
+                      <td style="padding: 3px 0; color: #64748b;"><b>Acción Tomada:</b></td>
+                      <td style="padding: 3px 0; color: #0f172a;"><span style="background-color: #d1fae5; color: #065f46; padding: 1px 6px; border-radius: 4px; font-weight: bold; font-size: 11px;">{action_name}</span></td>
+                  </tr>
+                  <tr>
+                      <td style="padding: 3px 0; color: #64748b;"><b>Fecha/Hora:</b></td>
+                      <td style="padding: 3px 0; color: #0f172a;">{completed_at_str}</td>
+                  </tr>
+              </table>
+          </div>
+          
+          <div style="background-color: #f0fdf4; border-left: 4px solid #10b981; padding: 12px 14px; margin: 15px 0; border-radius: 0 6px 6px 0;">
+              <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: bold; color: #065f46; text-transform: uppercase; letter-spacing: 0.5px;">💬 Comentario / Justificación Registrado</p>
+              <p style="margin: 0; font-size: 13px; color: #1f2937; line-height: 1.5; font-style: italic;">"{comment_text or 'Sin comentarios.'}"</p>
+          </div>
+          
+          {att_list_html}
+          
+          <p style="font-size: 12px; color: #64748b; margin-top: 20px;">
+              Este correo sirve como respaldo oficial y físico de la resolución de la tarea en el flujo operacional de la compañía.
+          </p>
+          
+          <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0 15px 0;">
+          <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">
+              Este es un correo automático enviado desde el Portal de Control Operacional.
+          </p>
+        </div>
+      </body>
+    </html>
+    """
+    
+    email_attachments = []
+    for att in attachments:
+        try:
+            if os.path.exists(att.file_path):
+                with open(att.file_path, 'rb') as f:
+                    file_bytes = f.read()
+                ext = os.path.splitext(att.file_name)[1].lower()
+                mime_map = {
+                    '.pdf': 'application/pdf',
+                    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    '.xls': 'application/vnd.ms-excel',
+                    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    '.doc': 'application/msword',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.zip': 'application/zip',
+                    '.csv': 'text/csv',
+                }
+                mime_type = mime_map.get(ext, 'application/octet-stream')
+                email_attachments.append({
+                    "data": file_bytes,
+                    "filename": att.file_name,
+                    "mime_type": mime_type
+                })
+        except Exception as ex:
+            print(f"Could not attach file '{att.file_name}' to completion receipt: {ex}")
+            
+    send_email_with_attachments(
+        to_email=executor.email,
+        subject=subject,
+        html_content=html_content,
+        attachments=email_attachments,
+        instance_id=inst.id,
+        task_id=task.id,
+        cc_emails=cc_list
     )
 
 def send_report_email(to_email: str, report_title: str, df: pd.DataFrame, message: str = ""):
@@ -713,7 +992,15 @@ def send_report_email(to_email: str, report_title: str, df: pd.DataFrame, messag
         attachments=attachments
     )
 
-def send_email_with_attachments(to_email: str, subject: str, html_content: str, attachments: list = None):
+def send_email_with_attachments(
+    to_email: str, 
+    subject: str, 
+    html_content: str, 
+    attachments: list = None,
+    instance_id: int = None,
+    task_id: int = None,
+    cc_emails: list = None
+):
     """Sends email through SMTP if configured, or saves it to disk in uploads/simulated_emails/ for simulation."""
     if attachments is None:
         attachments = []
@@ -727,6 +1014,11 @@ def send_email_with_attachments(to_email: str, subject: str, html_content: str, 
     except:
         pass
         
+    sender_email = "workflow-simulado@tuempresa.com"
+    rec_str = to_email
+    if cc_emails:
+        rec_str += f" (CC: {', '.join(cc_emails)})"
+
     # If SMTP is configured, send the real email
     if smtp_config:
         def get_val(keys):
@@ -740,7 +1032,7 @@ def send_email_with_attachments(to_email: str, subject: str, html_content: str, 
             return None
 
         smtp_server = get_val(["smtp_server", "server"])
-        sender_email = get_val(["sender_email", "email"])
+        sender_email = get_val(["sender_email", "email"]) or "workflow-simulado@tuempresa.com"
         password = get_val(["password", "sender_password"])
         port_val = get_val(["port", "smtp_port"])
         
@@ -756,6 +1048,11 @@ def send_email_with_attachments(to_email: str, subject: str, html_content: str, 
                 msg['From'] = sender_email
                 msg['To'] = to_email
                 
+                recipients = [to_email]
+                if cc_emails:
+                    msg['Cc'] = ", ".join(cc_emails)
+                    recipients.extend(cc_emails)
+                
                 msg_alternative = MIMEMultipart('alternative')
                 msg_alternative.attach(MIMEText(html_content, 'html'))
                 msg.attach(msg_alternative)
@@ -768,11 +1065,24 @@ def send_email_with_attachments(to_email: str, subject: str, html_content: str, 
                 server = smtplib.SMTP(smtp_server, port)
                 server.starttls()
                 server.login(sender_email, password)
-                server.sendmail(sender_email, to_email, msg.as_string())
+                server.sendmail(sender_email, recipients, msg.as_string())
                 server.quit()
+                
+                # Log success
+                log_email_dispatch(
+                    instance_id=instance_id,
+                    task_id=task_id,
+                    sender=sender_email,
+                    recipient=rec_str,
+                    subject=subject,
+                    body_html=html_content,
+                    attachments=attachments,
+                    status='SENT'
+                )
                 return
             except Exception as ex:
-                print(f"SMTP failed, saving to simulation cache: {str(ex)}")
+                err_msg = f"SMTP failed, fallback to simulation. Error: {str(ex)}"
+                print(err_msg)
 
     # Sandbox/Simulation fallback (No Credentials Rule compliant)
     # Save the email as an HTML file + individual attachments in uploads/simulated_emails/
@@ -795,6 +1105,20 @@ def send_email_with_attachments(to_email: str, subject: str, html_content: str, 
         att_filepath = os.path.join(sim_dir, f"{base_filename}_attachment_{att['filename']}")
         with open(att_filepath, 'wb') as f:
             f.write(att["data"])
+            
+    sim_details = f"Simulated email file saved to: {html_filepath}"
+    
+    log_email_dispatch(
+        instance_id=instance_id,
+        task_id=task_id,
+        sender=sender_email,
+        recipient=rec_str,
+        subject=subject,
+        body_html=html_content,
+        attachments=attachments,
+        status='SIMULATED',
+        error_message=sim_details
+    )
             
     try:
         print(f"[SIMULATION] Email saved successfully for '{to_email}' with subject '{subject}' to: {html_filepath}")

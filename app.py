@@ -1,8 +1,11 @@
 import streamlit as st
 import hashlib
-from database import get_db
+from database import get_db, init_db
 from models import WorkflowUser
 from components.ui_helpers import UIHelpers
+
+# Initialize database tables automatically
+init_db()
 
 # 1. Config page first
 st.set_page_config(
@@ -119,7 +122,8 @@ if "token" in st.query_params:
                 st.stop()
                 
             user_role_ids = [r.id for r in user.roles]
-            if task.assigned_role_id not in user_role_ids:
+            current_role_id = task.node.role_id if task.node.role_id is not None else task.assigned_role_id
+            if current_role_id not in user_role_ids:
                 st.error("❌ No tienes el rol requerido para procesar esta transición.")
                 st.stop()
                 

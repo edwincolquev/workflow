@@ -163,3 +163,21 @@ class WorkflowObjective(Base):
     month_period = Column(String(7), nullable=False)  # YYYY-MM
     description = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class WorkflowEmailLog(Base):
+    __tablename__ = 'wf_email_log'
+    id = Column(Integer, primary_key=True)
+    instance_id = Column(Integer, ForeignKey('wf_instance.id', ondelete='CASCADE'), nullable=False)
+    task_id = Column(Integer, ForeignKey('wf_task.id', ondelete='SET NULL'), nullable=True)
+    sender = Column(String(100), nullable=False)
+    recipient = Column(String(100), nullable=False)
+    subject = Column(String(200), nullable=False)
+    body_html = Column(Text, nullable=False)
+    attachments_json = Column(Text, nullable=True) # JSON list of dicts: [{"filename": "...", "size": 123}]
+    sent_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String(20), nullable=False)  # SENT, SIMULATED, FAILED
+    error_message = Column(Text, nullable=True)
+
+    instance = relationship('WorkflowInstance')
+    task = relationship('WorkflowTask')
+

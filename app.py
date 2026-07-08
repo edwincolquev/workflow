@@ -1,8 +1,11 @@
 import streamlit as st
 import hashlib
-from database import get_db
+from database import get_db, init_db
 from models import WorkflowUser
 from components.ui_helpers import UIHelpers
+
+# Initialize database tables automatically
+init_db()
 
 # 1. Config page first
 st.set_page_config(

@@ -383,9 +383,29 @@ class WorkflowEngine:
 
         # Trigger email notifications
         try:
-            from services.email_service import send_task_notification_email, send_workflow_completed_notification
+            from services.email_service import (
+                send_task_notification_email, 
+                send_workflow_completed_notification, 
+                send_task_completion_email
+            )
+            
+            # Send completion receipt email for the resolved task
+            if current_task:
+                send_task_completion_email(
+                    db=db,
+                    task=current_task,
+                    action_name=transition.action_name,
+                    comment_text=comment_text,
+                    attachments=forwarded_attachments
+                )
+                
             if instance.status == 'COMPLETED':
-                send_workflow_completed_notification(db, instance)
+                send_workflow_completed_notification(
+                    db=db,
+                    instance=instance,
+                    from_comment=comment_text,
+                    from_attachments=forwarded_attachments
+                )
             
             for nt in new_tasks:
                 db.refresh(nt)

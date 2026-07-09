@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Table, Float, Text
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Table, Float, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -53,9 +53,11 @@ class WorkflowNode(Base):
     role_id = Column(Integer, ForeignKey('wf_role.id', ondelete='SET NULL'), nullable=True)
     template_file_name = Column(String(255), nullable=True)
     template_file_path = Column(String(500), nullable=True)
+    erp_query_id = Column(Integer, ForeignKey('wf_erp_query.id', ondelete='SET NULL'), nullable=True)
 
     process = relationship('WorkflowProcess', back_populates='nodes')
     role = relationship('WorkflowRole')
+    erp_query = relationship('WorkflowErpQuery')
 
 class WorkflowTransition(Base):
     __tablename__ = 'wf_transition'
@@ -180,4 +182,23 @@ class WorkflowEmailLog(Base):
 
     instance = relationship('WorkflowInstance')
     task = relationship('WorkflowTask')
+
+class WorkflowErpQuery(Base):
+    __tablename__ = 'wf_erp_query'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True, nullable=False)
+    sql_query = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+
+class WorkflowInstanceQueryDocNum(Base):
+    __tablename__ = 'wf_instance_query_docnum'
+    id = Column(Integer, primary_key=True)
+    instance_id = Column(Integer, ForeignKey('wf_instance.id', ondelete='CASCADE'), nullable=False)
+    query_id = Column(Integer, ForeignKey('wf_erp_query.id', ondelete='CASCADE'), nullable=False)
+    docnum = Column(String(50), nullable=False)
+    
+    __table_args__ = (UniqueConstraint('instance_id', 'query_id', name='_instance_query_uc'),)
+
+    instance = relationship('WorkflowInstance')
+    query = relationship('WorkflowErpQuery')
 

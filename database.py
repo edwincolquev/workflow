@@ -28,9 +28,15 @@ def get_db():
     try:
         yield db
         db.commit()
-    except Exception:
+    except BaseException as e:
+        if e.__class__.__name__ in ["RerunException", "StopException"]:
+            try:
+                db.commit()
+            except Exception:
+                pass
+            raise e
         db.rollback()
-        raise
+        raise e
     finally:
         db.close()
 
@@ -75,6 +81,12 @@ def init_db():
         # 5. Add template_file_path to wf_node
         try:
             conn.execute(text("ALTER TABLE wf_node ADD COLUMN template_file_path VARCHAR(500);"))
+        except Exception:
+            pass
+
+        # 6. Add erp_query_id to wf_node
+        try:
+            conn.execute(text("ALTER TABLE wf_node ADD COLUMN erp_query_id INTEGER REFERENCES wf_erp_query(id) ON DELETE SET NULL;"))
         except Exception:
             pass
         

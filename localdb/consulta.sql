@@ -1,2 +1,7 @@
-update wf_user
-set email = 'edwincolquev@gmail.com'
+SELECT id,
+    title,
+    internal_code,
+    status,
+    docnum
+FROM wf_instance
+WHERE docnum = '10045'

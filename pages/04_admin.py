@@ -5,7 +5,7 @@ from database import get_db
 from models import (
     WorkflowProcess, WorkflowNode, WorkflowTransition, 
     WorkflowUser, WorkflowRole, WorkflowInstance, WorkflowTask,
-    WorkflowEmailLog
+    WorkflowEmailLog, WorkflowErpQuery, WorkflowInstanceQueryDocNum
 )
 from components.ui_helpers import UIHelpers
 from config.settings import ROLE_ACCESS
@@ -32,8 +32,8 @@ st.markdown("<h1 class='main-header'>⚙️ Configuración & Administración</h1
 st.markdown("<p style='color: #64748b;'>Configure el motor de workflow, valide la estructura lógica de los procesos, gestione la matriz de transiciones y cuentas de usuario.</p>", unsafe_allow_html=True)
 
 # Tabs
-t_transitions, t_processes, t_users, t_email_audit = st.tabs([
-    "🔀 Matriz de Transiciones", "📋 Procesos y Nodos", "👥 Usuarios y Roles", "✉️ Auditoría de Correos"
+t_transitions, t_processes, t_users, t_queries, t_email_audit = st.tabs([
+    "🔀 Matriz de Transiciones", "📋 Procesos y Nodos", "👥 Usuarios y Roles", "🔍 Consultas ERP", "✉️ Auditoría de Correos"
 ])
 
 def generate_mermaid(nodes, transitions):
@@ -359,6 +359,11 @@ with get_db() as db:
                     n_sla = st.number_input("SLA en Días (Tiempo estimado de ejecución, 0 = Sin SLA)", min_value=0, value=0, step=1)
                     n_template = st.file_uploader("Subir Plantilla Base (Ej. Excel vacío para completar)", key="add_node_template_upload")
                     
+                    # Load ERP queries
+                    all_erp_queries = db.query(WorkflowErpQuery).all()
+                    query_map = {q.id: q.name for q in all_erp_queries}
+                    n_query = st.selectbox("Consulta ERP Asociada (Opcional)", options=[0] + list(query_map.keys()), format_func=lambda x: query_map[x] if x != 0 else "Ninguna")
+
                     if st.form_submit_button("Guardar Nuevo Nodo"):
                         if not n_name.strip():
                             st.error("El nombre del nodo es requerido.")
@@ -390,7 +395,8 @@ with get_db() as db:
                                 description=n_desc.strip(),
                                 sla_hours=sla_val,
                                 template_file_name=t_name,
-                                template_file_path=t_path
+                                template_file_path=t_path,
+                                erp_query_id=n_query if n_query != 0 else None
                             )
                             db.add(new_node)
                             db.commit()
@@ -439,6 +445,16 @@ with get_db() as db:
                             
                             en_template = st.file_uploader("Reemplazar Plantilla Base (Opcional)", key=f"edit_template_{edit_node.id}")
                             
+                            # Load ERP queries
+                            all_erp_queries = db.query(WorkflowErpQuery).all()
+                            query_map = {q.id: q.name for q in all_erp_queries}
+                            en_query = st.selectbox(
+                                "Consulta ERP Asociada (Opcional)",
+                                options=[0] + list(query_map.keys()),
+                                format_func=lambda x: query_map[x] if x != 0 else "Ninguna",
+                                index=0 if not edit_node.erp_query_id else list(query_map.keys()).index(edit_node.erp_query_id) + 1
+                            )
+                            
                             remove_template = False
                             if edit_node.template_file_name:
                                 remove_template = st.checkbox("Eliminar plantilla actual")
@@ -455,6 +471,7 @@ with get_db() as db:
                                     edit_node.role_id = en_role if en_role != 0 else None
                                     edit_node.description = en_desc.strip()
                                     edit_node.sla_hours = en_sla if en_sla > 0 else None
+                                    edit_node.erp_query_id = en_query if en_query != 0 else None
                                     
                                     if remove_template:
                                         if edit_node.template_file_path and os.path.exists(edit_node.template_file_path):
@@ -691,6 +708,121 @@ with get_db() as db:
                         db.commit()
                         st.success(f"Descripción del rol '{edit_role.name}' actualizada.")
                         st.rerun()
+
+    # ==========================================
+    # TAB: GESTION DE CONSULTAS ERP
+    # ==========================================
+    with t_queries:
+        st.markdown("<div class='section-header'>🔍 Gestión de Consultas ERP SAP B1</div>", unsafe_allow_html=True)
+        st.markdown("<p style='color: #64748b;'>Configure las consultas SQL que se ejecutarán en las etapas del workflow usando la variable <code>:docnum</code>.</p>", unsafe_allow_html=True)
+
+        all_queries = db.query(WorkflowErpQuery).all()
+        if all_queries:
+            q_data = []
+            for q in all_queries:
+                q_data.append({
+                    'ID': q.id,
+                    'Nombre Consulta': q.name,
+                    'Descripción': q.description or 'Sin descripción',
+                    'Consulta SQL': q.sql_query
+                })
+            st.dataframe(pd.DataFrame(q_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No hay consultas ERP configuradas en este momento.")
+
+        t_add_q, t_edit_q, t_del_q = st.tabs(["➕ Agregar Consulta", "✏️ Editar Consulta", "🗑️ Eliminar Consulta"])
+
+        with t_add_q:
+            with st.form("add_query_form"):
+                q_name = st.text_input("Nombre de la Consulta", placeholder="ej. Consulta Oferta de Compra")
+                q_desc = st.text_area("Descripción", placeholder="ej. Muestra información detallada de la oferta de compra desde SAP")
+                q_sql = st.text_area("Consulta SQL (Debe contener :docnum)", placeholder="SELECT DocNum, CardCode, CardName, DocDate, DocTotal FROM OQUT WHERE DocNum = :docnum", height=150)
+                
+                if st.form_submit_button("Guardar Consulta"):
+                    if not q_name.strip() or not q_sql.strip():
+                        st.error("El nombre de la consulta y el código SQL son requeridos.")
+                    elif ":docnum" not in q_sql.lower():
+                        st.error("El código SQL debe contener el placeholder ':docnum' para parametrizar la consulta.")
+                    else:
+                        # Check name uniqueness
+                        existing_q = db.query(WorkflowErpQuery).filter(WorkflowErpQuery.name == q_name.strip()).first()
+                        if existing_q:
+                            st.error("❌ Ya existe una consulta registrada con este nombre.")
+                        else:
+                            new_q = WorkflowErpQuery(
+                                name=q_name.strip(),
+                                description=q_desc.strip(),
+                                sql_query=q_sql.strip()
+                            )
+                            db.add(new_q)
+                            db.commit()
+                            st.success(f"Consulta '{q_name}' guardada correctamente.")
+                            st.rerun()
+
+        with t_edit_q:
+            if not all_queries:
+                st.info("No hay consultas configuradas para editar.")
+            else:
+                q_options_edit = {q.id: q.name for q in all_queries}
+                edit_q_id = st.selectbox(
+                    "Seleccione Consulta a Editar:",
+                    options=list(q_options_edit.keys()),
+                    format_func=lambda x: q_options_edit[x],
+                    key="select_query_edit"
+                )
+                edit_q = db.query(WorkflowErpQuery).filter(WorkflowErpQuery.id == edit_q_id).first() if edit_q_id else None
+                if edit_q:
+                    with st.form("edit_query_form"):
+                        eq_name = st.text_input("Nombre de la Consulta", value=edit_q.name)
+                        eq_desc = st.text_area("Descripción", value=edit_q.description or "")
+                        eq_sql = st.text_area("Consulta SQL (Debe contener :docnum)", value=edit_q.sql_query, height=150)
+
+                        if st.form_submit_button("Actualizar Consulta"):
+                            if not eq_name.strip() or not eq_sql.strip():
+                                st.error("El nombre de la consulta y el código SQL no pueden estar vacíos.")
+                            elif ":docnum" not in eq_sql.lower():
+                                st.error("El código SQL debe contener el placeholder ':docnum' para parametrizar la consulta.")
+                            else:
+                                # Check name uniqueness
+                                existing_q = db.query(WorkflowErpQuery).filter(
+                                    WorkflowErpQuery.name == eq_name.strip(),
+                                    WorkflowErpQuery.id != edit_q.id
+                                ).first()
+                                if existing_q:
+                                    st.error("❌ Ya existe otra consulta registrada con este nombre.")
+                                else:
+                                    edit_q.name = eq_name.strip()
+                                    edit_q.description = eq_desc.strip()
+                                    edit_q.sql_query = eq_sql.strip()
+                                    db.commit()
+                                    st.success(f"Consulta '{eq_name}' actualizada.")
+                                    st.rerun()
+
+        with t_del_q:
+            if not all_queries:
+                st.info("No hay consultas configuradas para eliminar.")
+            else:
+                q_options_del = {q.id: q.name for q in all_queries}
+                del_q_id = st.selectbox(
+                    "Seleccione Consulta a Eliminar:",
+                    options=list(q_options_del.keys()),
+                    format_func=lambda x: q_options_del[x],
+                    key="select_query_del"
+                )
+                del_q = db.query(WorkflowErpQuery).filter(WorkflowErpQuery.id == del_q_id).first() if del_q_id else None
+                if del_q:
+                    # Check if node is currently using it
+                    nodes_using = db.query(WorkflowNode).filter(WorkflowNode.erp_query_id == del_q.id).all()
+                    if nodes_using:
+                        node_names = ", ".join([f"'{n.name}'" for n in nodes_using])
+                        st.error(f"No se puede eliminar la consulta porque está asignada a las etapas: {node_names}. Desasócielas primero.")
+                    else:
+                        st.warning(f"¿Está seguro de que desea eliminar la consulta '{del_q.name}'?")
+                        if st.button("Eliminar Consulta", type="primary", key="del_query_btn"):
+                            db.delete(del_q)
+                            db.commit()
+                            st.success("Consulta eliminada correctamente.")
+                            st.rerun()
 
     # ==========================================
     # TAB 4: AUDITORÍA DE CORREOS

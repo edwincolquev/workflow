@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 import hashlib
 from database import get_db, init_db
 from models import WorkflowUser
@@ -221,29 +222,94 @@ if "token" in st.query_params:
                     st.info("El DocNum ingresado es igual al actual.")
 
             # ERP document detail panel
-            active_docnum = inst.docnum
-            if active_docnum:
+            custom_query = inst.current_node.erp_query if (inst.current_node and inst.current_node.erp_query) else None
+            
+            # Fetch query-specific DocNum from DB
+            q_docnum_record = None
+            if custom_query:
+                from models import WorkflowInstanceQueryDocNum
+                q_docnum_record = db.query(WorkflowInstanceQueryDocNum).filter(
+                    WorkflowInstanceQueryDocNum.instance_id == inst.id,
+                    WorkflowInstanceQueryDocNum.query_id == custom_query.id
+                ).first()
+                
+            active_docnum = q_docnum_record.docnum if q_docnum_record else (inst.docnum or "") if not custom_query else ""
+            
+            if active_docnum or custom_query:
                 try:
                     from services.data_loader import DataLoaderService
-                    df_erp = DataLoaderService.get_sap_document_details(db, active_docnum)
-                    if not df_erp.empty:
-                        first_row = df_erp.iloc[0]
-                        c_e1, c_e2, c_e3 = st.columns(3)
-                        with c_e1:
-                            st.metric("Número SAP B1", str(first_row.get('Número SAP', active_docnum)))
-                        with c_e2:
-                            st.metric("Proveedor", str(first_row.get('Nombre Proveedor', '—')))
-                        with c_e3:
-                            monto = first_row.get('Monto Total USD', 0)
+                    
+                    # If current node has a custom ERP query, execute that instead of default
+                    if custom_query:
+                        st.markdown(f"🧬 **Consulta ERP Personalizada: {custom_query.name}**")
+                        if custom_query.description:
+                            st.caption(custom_query.description)
+                        
+                        if active_docnum:
+                            st.info(f"📋 Ejecutando consulta con DocNum: **{active_docnum}**")
+                            
+                            sql_lower = custom_query.sql_query.lower()
+                            has_sap_tables = any(t in sql_lower for t in ['opor', 'por1', 'opqt', 'pqt1'])
+                            
+                            from config.database_sap import get_sap_connection
+                            sap_conn = None
                             try:
-                                st.metric("Total Documento", f"${float(monto):,.2f} USD")
+                                sap_conn = get_sap_connection()
                             except Exception:
-                                st.metric("Total Documento", str(monto))
-                        st.markdown("**Detalle de Partidas:**")
-                        cols_to_show = [c for c in ['Código Artículo', 'Descripción', 'Cantidad Solicitada', 'Cantidad Pendiente', 'Precio Unitario'] if c in df_erp.columns]
-                        st.dataframe(df_erp[cols_to_show], use_container_width=True, hide_index=True)
+                                pass
+                                
+                            df_erp = pd.DataFrame()
+                            if has_sap_tables and not sap_conn:
+                                df_erp = DataLoaderService.get_sap_document_details(db, active_docnum)
+                            else:
+                                if sap_conn:
+                                    try:
+                                        query_to_run = custom_query.sql_query
+                                        params = []
+                                        if ":docnum" in query_to_run:
+                                            query_to_run = query_to_run.replace(":docnum", "?")
+                                            params.append(active_docnum)
+                                        df_erp = pd.read_sql(query_to_run, sap_conn, params=params)
+                                    except Exception as e:
+                                        sap_conn = None
+                                
+                                if not sap_conn or df_erp.empty:
+                                    from sqlalchemy import text
+                                    try:
+                                        res = db.execute(text(custom_query.sql_query), {"docnum": active_docnum})
+                                        cols = res.keys()
+                                        rows = res.fetchall()
+                                        if rows:
+                                            df_erp = pd.DataFrame(rows, columns=cols)
+                                    except Exception as ex:
+                                        st.error(f"❌ Error al ejecutar la consulta SQL: {str(ex)}")
+                            
+                            if not df_erp.empty:
+                                st.dataframe(df_erp, use_container_width=True, hide_index=True)
+                            else:
+                                st.info(f"La consulta no retornó resultados para el DocNum {active_docnum}.")
+                        else:
+                            st.info("💡 Por favor, configure y guarde el DocNum para visualizar los datos del ERP.")
                     else:
-                        st.info(f"No se encontraron partidas activas en el ERP para el documento #{active_docnum}.")
+                        df_erp = DataLoaderService.get_sap_document_details(db, active_docnum)
+                        if not df_erp.empty:
+                            first_row = df_erp.iloc[0]
+                            c_e1, c_e2, c_e3 = st.columns(3)
+                            with c_e1:
+                                st.metric("Número SAP B1", str(first_row.get('Número SAP', active_docnum)))
+                            with c_e2:
+                                st.metric("Proveedor", str(first_row.get('Nombre Proveedor', '—')))
+                            with c_e3:
+                                monto = first_row.get('Monto Total USD', 0)
+                                try:
+                                    st.metric("Total Documento", f"${float(monto):,.2f} USD")
+                                except Exception:
+                                    st.metric("Total Documento", str(monto))
+                            st.markdown("**Detalle de Partidas:**")
+                            cols_to_show = [c for c in ['Código Artículo', 'Descripción', 'Cantidad Solicitada', 'Cantidad Pendiente', 'Precio Unitario'] if c in df_erp.columns]
+                            st.dataframe(df_erp[cols_to_show], use_container_width=True, hide_index=True)
+                        else:
+                            st.info(f"No se encontraron partidas activas en el ERP para el documento #{active_docnum}.")
                 except Exception as erp_ex:
                     st.warning(f"No se pudo cargar la información del ERP: {str(erp_ex)}")
             else:

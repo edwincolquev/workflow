@@ -4,7 +4,8 @@ from datetime import datetime
 from database import get_db
 from models import (
     WorkflowTask, WorkflowInstance, WorkflowUser, WorkflowRole, WorkflowProcess, 
-    WorkflowNode, WorkflowHistory, WorkflowTransition, WorkflowComment, WorkflowAttachment
+    WorkflowNode, WorkflowHistory, WorkflowTransition, WorkflowComment, WorkflowAttachment,
+    WorkflowErpQuery, WorkflowInstanceQueryDocNum
 )
 from components.ui_helpers import UIHelpers
 from components.comments import CommentsComponent
@@ -385,6 +386,19 @@ with get_db() as db:
         if not instance:
             st.error(f"La instancia de workflow #{instance_id} no existe.")
         else:
+            def log_debug(msg):
+                try:
+                    import os
+                    from datetime import datetime
+                    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'localdb')
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_file = os.path.join(log_dir, 'debug.log')
+                    with open(log_file, "a", encoding="utf-8") as f:
+                        f.write(f"{datetime.now()}: {msg}\n")
+                except Exception as e:
+                    print(f"LOGGER ERROR: {e}")
+
+            log_debug(f"[DETAIL VIEW] Selected Instance ID: {instance.id}, Title: {instance.title}, Current Node ID: {instance.current_node_id} ({instance.current_node.name if instance.current_node else 'N/A'})")
             st.markdown("---")
             
             col_title, col_close = st.columns([5, 1])
@@ -448,30 +462,162 @@ with get_db() as db:
             </div>
             """, unsafe_allow_html=True)
 
-            # ─── SAP ERP Data (visible if DocNum is present) ─────────────────────────────
-            if instance.docnum:
+            # ─── SAP ERP Data (visible if DocNum or custom_query is present) ─────────────
+            custom_query = instance.current_node.erp_query if (instance.current_node and instance.current_node.erp_query) else None
+            
+            def log_debug(msg):
+                try:
+                    with open("c:\\supply_chain\\localdb\\debug.log", "a", encoding="utf-8") as f:
+                        f.write(f"{datetime.now()}: {msg}\n")
+                except Exception:
+                    pass
+
+            if instance.docnum or custom_query:
                 with st.expander("📦 Detalle de Documento ERP (SAP B1)", expanded=True):
                     from services.data_loader import DataLoaderService
-                    df_erp = DataLoaderService.get_sap_document_details(db, instance.docnum)
-                    if not df_erp.empty:
-                        # General fields in columns
-                        c_erp1, c_erp2, c_erp3 = st.columns(3)
-                        with c_erp1:
-                            st.metric("Número SAP B1", df_erp.iloc[0]['Número SAP'])
-                        with c_erp2:
-                            st.metric("Proveedor", df_erp.iloc[0]['Nombre Proveedor'])
-                        with c_erp3:
-                            st.metric("Total Documento", f"${df_erp.iloc[0]['Monto Total USD']:,} USD")
+                    
+                    if custom_query:
+                        log_debug(f"[ERP EXPANDER] Instance ID: {instance.id}, Custom Query ID: {custom_query.id}, Name: {custom_query.name}")
+                        st.markdown(f"🧬 **Consulta ERP Personalizada: {custom_query.name}**")
+                        if custom_query.description:
+                            st.caption(custom_query.description)
                         
-                        # Items table
-                        st.markdown("**Detalle de Partidas:**")
-                        st.dataframe(
-                            df_erp[['Código Artículo', 'Descripción', 'Cantidad Solicitada', 'Cantidad Pendiente', 'Precio Unitario']],
-                            use_container_width=True,
-                            hide_index=True
+                        # 1. Fetch query-specific DocNum from DB
+                        q_docnum_record = db.query(WorkflowInstanceQueryDocNum).filter(
+                            WorkflowInstanceQueryDocNum.instance_id == instance.id,
+                            WorkflowInstanceQueryDocNum.query_id == custom_query.id
+                        ).first()
+                        
+                        active_docnum = q_docnum_record.docnum if q_docnum_record else ""
+                        log_debug(f"[ERP EXPANDER] Loaded active_docnum from DB: '{active_docnum}'")
+                        
+                        # 2. Check if user is authorized to edit the DocNum for this stage
+                        is_editable = (instance.status == 'ACTIVE') and (
+                            st.session_state.user['role'] in ['Administrador', 'Gerencia'] or
+                            any((t.node.role_id if t.node.role_id is not None else t.assigned_role_id) in user_role_ids 
+                                for t in db.query(WorkflowTask).filter(
+                                    WorkflowTask.instance_id == instance.id,
+                                    WorkflowTask.status == 'PENDING'
+                                ).all())
                         )
+                        log_debug(f"[ERP EXPANDER] is_editable: {is_editable}, User Role: {st.session_state.user['role']}")
+                        
+                        # 3. Render inline editor for query-specific DocNum if editable
+                        if is_editable:
+                            col_qdoc1, col_qdoc2 = st.columns([3, 1])
+                            with col_qdoc1:
+                                input_qdocnum = st.text_input(
+                                    f"Ingresar DocNum para la consulta '{custom_query.name}':",
+                                    value=active_docnum,
+                                    placeholder="Ej. 10045",
+                                    key=f"qdocnum_input_{instance.id}_{custom_query.id}"
+                                )
+                                log_debug(f"[ERP EXPANDER] st.text_input output (input_qdocnum): '{input_qdocnum}'")
+                            with col_qdoc2:
+                                st.write("") # spacing
+                                st.write("")
+                                button_clicked = st.button("💾 Guardar DocNum", key=f"save_qdocnum_{instance.id}_{custom_query.id}", use_container_width=True)
+                                log_debug(f"[ERP EXPANDER] Button '💾 Guardar DocNum' clicked state: {button_clicked}")
+                                if button_clicked:
+                                    log_debug(f"[ERP EXPANDER] Processing button click. Input DocNum: '{input_qdocnum}'")
+                                    if not input_qdocnum.strip():
+                                        st.error("El DocNum no puede estar vacío.")
+                                    else:
+                                        if not q_docnum_record:
+                                            log_debug("[ERP EXPANDER] No existing record. Creating new WorkflowInstanceQueryDocNum")
+                                            q_docnum_record = WorkflowInstanceQueryDocNum(
+                                                instance_id=instance.id,
+                                                query_id=custom_query.id,
+                                                docnum=input_qdocnum.strip()
+                                            )
+                                            db.add(q_docnum_record)
+                                        else:
+                                            log_debug(f"[ERP EXPANDER] Existing record found. Updating docnum to '{input_qdocnum.strip()}'")
+                                            q_docnum_record.docnum = input_qdocnum.strip()
+                                        
+                                        # If global DocNum is not set, set it as default
+                                        if not instance.docnum:
+                                            instance.docnum = input_qdocnum.strip()
+                                            instance.external_ref = f"DocNum:{input_qdocnum.strip()}"
+                                            
+                                        log_debug("[ERP EXPANDER] Calling db.commit()...")
+                                        db.commit()
+                                        log_debug("[ERP EXPANDER] db.commit() completed successfully. Calling st.rerun()...")
+                                        st.success("✅ DocNum de la consulta guardado con éxito.")
+                                        st.rerun()
+                            active_docnum = input_qdocnum.strip()
+                        else:
+                            if active_docnum:
+                                st.info(f"📋 Ejecutando consulta con DocNum: **{active_docnum}**")
+                        
+                        # 4. Execute query using active_docnum
+                        if active_docnum:
+                            sql_lower = custom_query.sql_query.lower()
+                            has_sap_tables = any(t in sql_lower for t in ['opor', 'por1', 'opqt', 'pqt1'])
+                            
+                            from config.database_sap import get_sap_connection
+                            sap_conn = None
+                            try:
+                                sap_conn = get_sap_connection()
+                            except Exception:
+                                pass
+                                
+                            df_erp = pd.DataFrame()
+                            if has_sap_tables and not sap_conn:
+                                df_erp = DataLoaderService.get_sap_document_details(db, active_docnum)
+                            else:
+                                if sap_conn:
+                                    try:
+                                        query_to_run = custom_query.sql_query
+                                        params = []
+                                        if ":docnum" in query_to_run:
+                                            query_to_run = query_to_run.replace(":docnum", "?")
+                                            params.append(active_docnum)
+                                        df_erp = pd.read_sql(query_to_run, sap_conn, params=params)
+                                    except Exception as e:
+                                        sap_conn = None
+                                
+                                if not sap_conn or df_erp.empty:
+                                    from sqlalchemy import text
+                                    try:
+                                        res = db.execute(text(custom_query.sql_query), {"docnum": active_docnum})
+                                        cols = res.keys()
+                                        rows = res.fetchall()
+                                        if rows:
+                                            df_erp = pd.DataFrame(rows, columns=cols)
+                                    except Exception as ex:
+                                        st.error(f"❌ Error al ejecutar la consulta SQL: {str(ex)}")
+                            
+                            if not df_erp.empty:
+                                st.dataframe(df_erp, use_container_width=True, hide_index=True)
+                            else:
+                                st.info(f"La consulta no retornó resultados para el DocNum {active_docnum}.")
+                        else:
+                            if not is_editable:
+                                st.warning("⚠️ No se ha configurado un DocNum para esta etapa.")
+                            else:
+                                st.info("💡 Por favor, configure y guarde el DocNum para visualizar los datos del ERP.")
                     else:
-                        st.info(f"No se encontraron partidas activas en el ERP para el documento #{instance.docnum}. Verifique si está completado o cancelado en SAP.")
+                        df_erp = DataLoaderService.get_sap_document_details(db, instance.docnum)
+                        if not df_erp.empty:
+                            # General fields in columns
+                            c_erp1, c_erp2, c_erp3 = st.columns(3)
+                            with c_erp1:
+                                st.metric("Número SAP B1", df_erp.iloc[0]['Número SAP'])
+                            with c_erp2:
+                                st.metric("Proveedor", df_erp.iloc[0]['Nombre Proveedor'])
+                            with c_erp3:
+                                st.metric("Total Documento", f"${df_erp.iloc[0]['Monto Total USD']:,} USD")
+                            
+                            # Items table
+                            st.markdown("**Detalle de Partidas:**")
+                            st.dataframe(
+                                df_erp[['Código Artículo', 'Descripción', 'Cantidad Solicitada', 'Cantidad Pendiente', 'Precio Unitario']],
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                        else:
+                            st.info(f"No se encontraron partidas activas en el ERP para el documento #{instance.docnum}. Verifique si está completado o cancelado en SAP.")
 
             # ─── DocNum Editor (always visible for active instances and admins) ───────────
             if instance.status == 'ACTIVE' or st.session_state.user['role'] in ['Administrador', 'Gerencia']:
@@ -497,6 +643,24 @@ with get_db() as db:
                                     instance.docnum = new_docnum.strip()
                                     instance.external_ref = f"DocNum:{new_docnum.strip()}"
                                     instance.updated_at = datetime.utcnow()
+                                    
+                                    # Sync with active custom query if it exists
+                                    active_query = instance.current_node.erp_query if (instance.current_node and instance.current_node.erp_query) else None
+                                    if active_query:
+                                        q_docnum_record = db.query(WorkflowInstanceQueryDocNum).filter(
+                                            WorkflowInstanceQueryDocNum.instance_id == instance.id,
+                                            WorkflowInstanceQueryDocNum.query_id == active_query.id
+                                        ).first()
+                                        if not q_docnum_record:
+                                            q_docnum_record = WorkflowInstanceQueryDocNum(
+                                                instance_id=instance.id,
+                                                query_id=active_query.id,
+                                                docnum=new_docnum.strip()
+                                            )
+                                            db.add(q_docnum_record)
+                                        else:
+                                            q_docnum_record.docnum = new_docnum.strip()
+                                            
                                     db.add(WorkflowHistory(
                                         instance_id=instance.id,
                                         source_node_id=instance.current_node_id,
@@ -599,6 +763,7 @@ with get_db() as db:
                         current_assigned_role_name = at.node.role.name if at.node.role else at.assigned_role.name
                         st.write(f"Asignado al Rol: **{current_assigned_role_name}**")
                         st.markdown(sla_info_html, unsafe_allow_html=True)
+
 
                         node_transitions = db.query(WorkflowTransition).filter(
                             WorkflowTransition.process_id == instance.process_id,

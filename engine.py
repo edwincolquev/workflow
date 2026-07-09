@@ -206,6 +206,23 @@ class WorkflowEngine:
             if docnum_clean:
                 instance.docnum = docnum_clean
                 instance.external_ref = f"DocNum:{docnum_clean}"
+                
+                # Sincronizar automáticamente con la consulta activa si existe
+                if instance.current_node and instance.current_node.erp_query_id:
+                    from models import WorkflowInstanceQueryDocNum
+                    q_docnum_record = db.query(WorkflowInstanceQueryDocNum).filter(
+                        WorkflowInstanceQueryDocNum.instance_id == instance_id,
+                        WorkflowInstanceQueryDocNum.query_id == instance.current_node.erp_query_id
+                    ).first()
+                    if not q_docnum_record:
+                        q_docnum_record = WorkflowInstanceQueryDocNum(
+                            instance_id=instance_id,
+                            query_id=instance.current_node.erp_query_id,
+                            docnum=docnum_clean
+                        )
+                        db.add(q_docnum_record)
+                    else:
+                        q_docnum_record.docnum = docnum_clean
 
         transition = db.query(WorkflowTransition).filter(WorkflowTransition.id == transition_id).first()
         if not transition or transition.process_id != instance.process_id:

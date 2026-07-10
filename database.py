@@ -19,6 +19,16 @@ engine = create_engine(
     connect_args={"check_same_thread": False}  # Needed for SQLite in multi-threaded Streamlit
 )
 
+# Enable SQLite foreign key support
+from sqlalchemy.engine import Engine
+from sqlalchemy import event
+
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -101,3 +111,33 @@ def init_db():
             conn.commit()
         except Exception:
             pass
+
+    # Purge any existing orphan transitions or tasks left from prior deletions
+    with SessionLocal() as db_session:
+        try:
+            from models import WorkflowNode, WorkflowTransition, WorkflowTask, WorkflowInstance
+            
+            existing_node_ids = [n.id for n in db_session.query(WorkflowNode.id).all()]
+            
+            # 1. Purge transitions referencing deleted nodes
+            orphan_transitions = db_session.query(WorkflowTransition).filter(
+                (~WorkflowTransition.source_node_id.in_(existing_node_ids)) |
+                (~WorkflowTransition.target_node_id.in_(existing_node_ids))
+            ).all()
+            if orphan_transitions:
+                for t in orphan_transitions:
+                    db_session.delete(t)
+                db_session.commit()
+                print(f"Purged {len(orphan_transitions)} orphan transitions from SQLite.")
+                
+            # 2. Purge tasks referencing deleted nodes
+            orphan_tasks = db_session.query(WorkflowTask).filter(
+                ~WorkflowTask.node_id.in_(existing_node_ids)
+            ).all()
+            if orphan_tasks:
+                for tk in orphan_tasks:
+                    db_session.delete(tk)
+                db_session.commit()
+                print(f"Purged {len(orphan_tasks)} orphan tasks from SQLite.")
+        except Exception as e:
+            print(f"Error purging orphan records: {str(e)}")

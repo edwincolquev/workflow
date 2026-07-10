@@ -236,16 +236,26 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
     # ── Base URL configuration ─────────────────────────────────────────────────
     base_url = "http://localhost:8501"
     try:
-        sec = None
-        if "email_workflow" in st.secrets:
-            sec = st.secrets["email_workflow"]
-        elif "email" in st.secrets:
-            sec = st.secrets["email"]
-        if sec:
-            for k in ["base_url", "BASE_URL"]:
-                if k in sec:
-                    base_url = sec[k].rstrip('/')
-                    break
+        import os
+        if "BASE_URL" in os.environ:
+            base_url = os.environ["BASE_URL"].rstrip('/')
+        elif "base_url" in os.environ:
+            base_url = os.environ["base_url"].rstrip('/')
+        elif "BASE_URL" in st.secrets:
+            base_url = st.secrets["BASE_URL"].rstrip('/')
+        elif "base_url" in st.secrets:
+            base_url = st.secrets["base_url"].rstrip('/')
+        else:
+            sec = None
+            if "email_workflow" in st.secrets:
+                sec = st.secrets["email_workflow"]
+            elif "email" in st.secrets:
+                sec = st.secrets["email"]
+            if sec:
+                for k in ["base_url", "BASE_URL"]:
+                    if k in sec:
+                        base_url = sec[k].rstrip('/')
+                        break
     except:
         pass
 

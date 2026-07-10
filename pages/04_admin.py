@@ -429,7 +429,7 @@ with get_db() as db:
                                         key=f"dl_template_{edit_node.id}"
                                     )
                                     
-                        with st.form("edit_node_form"):
+                        with st.form(f"edit_node_form_{edit_node.id}"):
                             en_name = st.text_input("Nombre del Nodo", value=edit_node.name)
                             en_types = ['START', 'TASK', 'DECISION', 'GATEWAY', 'NOTIFICATION', 'END']
                             en_type_idx = en_types.index(edit_node.type) if edit_node.type in en_types else 0
@@ -772,7 +772,7 @@ with get_db() as db:
                 )
                 edit_q = db.query(WorkflowErpQuery).filter(WorkflowErpQuery.id == edit_q_id).first() if edit_q_id else None
                 if edit_q:
-                    with st.form("edit_query_form"):
+                    with st.form(f"edit_query_form_{edit_q.id}"):
                         eq_name = st.text_input("Nombre de la Consulta", value=edit_q.name)
                         eq_desc = st.text_area("Descripción", value=edit_q.description or "")
                         eq_sql = st.text_area("Consulta SQL (Debe contener :docnum)", value=edit_q.sql_query, height=150)

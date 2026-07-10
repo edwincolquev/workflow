@@ -89,6 +89,12 @@ def init_db():
             conn.execute(text("ALTER TABLE wf_node ADD COLUMN erp_query_id INTEGER REFERENCES wf_erp_query(id) ON DELETE SET NULL;"))
         except Exception:
             pass
+
+        # 7. Add docnum to wf_task
+        try:
+            conn.execute(text("ALTER TABLE wf_task ADD COLUMN docnum VARCHAR(50);"))
+        except Exception:
+            pass
         
         # In SQLAlchemy 2.x, commit connection context to persist ALTER TABLE
         try:

@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import hashlib
 from database import get_db, init_db
-from models import WorkflowUser
+from models import WorkflowUser, WorkflowTask, WorkflowNode, WorkflowTransition, WorkflowHistory
 from components.ui_helpers import UIHelpers
 
 # Initialize database tables automatically
@@ -178,144 +178,125 @@ if "token" in st.query_params:
             </div>
             """, unsafe_allow_html=True)
 
-            # ── Section 1: ERP Data & DocNum Editor ─────────────────────────────────
-            st.markdown("<div class='section-header'>📦 Documento ERP (SAP B1)</div>", unsafe_allow_html=True)
-            
-            # Inline DocNum editor (outside form so it can submit independently)
-            current_docnum = inst.docnum or ""
-            col_dn1, col_dn2 = st.columns([3, 1])
-            with col_dn1:
-                new_docnum_input = st.text_input(
-                    "DocNum (Número de Documento SAP B1):",
-                    value=current_docnum,
-                    placeholder="Ej. 10045",
-                    key="landing_docnum_input"
-                )
-            with col_dn2:
-                st.write("")
-                st.write("")
-                save_docnum_btn = st.button("💾 Guardar DocNum", key="landing_save_docnum", use_container_width=True)
-            
-            if save_docnum_btn:
-                if new_docnum_input.strip() and new_docnum_input.strip() != current_docnum:
-                    try:
-                        inst.docnum = new_docnum_input.strip()
-                        inst.external_ref = f"DocNum:{new_docnum_input.strip()}"
-                        inst.updated_at = datetime.utcnow()
-                        db.add(WorkflowHistory(
-                            instance_id=inst.id,
-                            source_node_id=inst.current_node_id,
-                            target_node_id=inst.current_node_id,
-                            user_id=user.id,
-                            action='UPDATE_DOCNUM',
-                            comment=f"DocNum actualizado a '{new_docnum_input.strip()}' vía email-landing.",
-                            timestamp=datetime.utcnow()
-                        ))
-                        db.commit()
-                        st.success(f"DocNum actualizado a **{new_docnum_input.strip()}**.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error al guardar DocNum: {str(e)}")
-                elif not new_docnum_input.strip():
-                    st.warning("Ingrese un valor de DocNum válido.")
-                else:
-                    st.info("El DocNum ingresado es igual al actual.")
-
             # ERP document detail panel
-            custom_query = inst.current_node.erp_query if (inst.current_node and inst.current_node.erp_query) else None
+            custom_query = task.node.erp_query if (task.node and task.node.erp_query) else None
             
-            # Fetch query-specific DocNum from DB
-            q_docnum_record = None
             if custom_query:
-                from models import WorkflowInstanceQueryDocNum
-                q_docnum_record = db.query(WorkflowInstanceQueryDocNum).filter(
-                    WorkflowInstanceQueryDocNum.instance_id == inst.id,
-                    WorkflowInstanceQueryDocNum.query_id == custom_query.id
-                ).first()
+                # ── Section 1: ERP Data & DocNum Editor ─────────────────────────────────
+                st.markdown("<div class='section-header'>📦 Documento ERP (SAP B1)</div>", unsafe_allow_html=True)
                 
-            active_docnum = q_docnum_record.docnum if q_docnum_record else (inst.docnum or "") if not custom_query else ""
-            
-            if active_docnum or custom_query:
-                try:
-                    from services.data_loader import DataLoaderService
-                    
-                    # If current node has a custom ERP query, execute that instead of default
-                    if custom_query:
+                # Inline DocNum editor (outside form so it can submit independently)
+                current_docnum = task.docnum or ""
+                col_dn1, col_dn2 = st.columns([3, 1])
+                with col_dn1:
+                    new_docnum_input = st.text_input(
+                        "DocNum (Número de Documento SAP B1):",
+                        value=current_docnum,
+                        placeholder="Ej. 10045",
+                        key="landing_docnum_input"
+                    )
+                with col_dn2:
+                    st.write("")
+                    st.write("")
+                    save_docnum_btn = st.button("💾 Guardar DocNum", key="landing_save_docnum", use_container_width=True)
+                
+                if save_docnum_btn:
+                    if new_docnum_input.strip() and new_docnum_input.strip() != current_docnum:
+                        try:
+                            docnum_clean = new_docnum_input.strip()
+                            task.docnum = docnum_clean
+                            
+                            # Synchronize other tasks with the same query configuration
+                            if task.node.erp_query_id is not None:
+                                other_tasks = db.query(WorkflowTask).join(WorkflowTask.node).filter(
+                                    WorkflowTask.instance_id == inst.id,
+                                    WorkflowNode.erp_query_id == task.node.erp_query_id
+                                ).all()
+                                for ot in other_tasks:
+                                    ot.docnum = docnum_clean
+                                    
+                            # Keep instance docnum in sync as general metadata
+                            inst.docnum = docnum_clean
+                            inst.external_ref = f"DocNum:{docnum_clean}"
+                            inst.updated_at = datetime.utcnow()
+                            db.add(WorkflowHistory(
+                                instance_id=inst.id,
+                                task_id=task.id,
+                                source_node_id=task.node_id,
+                                target_node_id=task.node_id,
+                                user_id=user.id,
+                                action='UPDATE_DOCNUM',
+                                comment=f"DocNum actualizado a '{docnum_clean}' en etapa '{task.node.name}' vía email-landing.",
+                                timestamp=datetime.utcnow()
+                            ))
+                            db.commit()
+                            st.success(f"DocNum actualizado a **{docnum_clean}**.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al guardar DocNum: {str(e)}")
+                    elif not new_docnum_input.strip():
+                        st.warning("Ingrese un valor de DocNum válido.")
+                    else:
+                        st.info("El DocNum ingresado es igual al actual.")
+
+                active_docnum = task.docnum or ""
+                
+                if active_docnum:
+                    try:
+                        from services.data_loader import DataLoaderService
+                        
                         st.markdown(f"🧬 **Consulta ERP Personalizada: {custom_query.name}**")
                         if custom_query.description:
                             st.caption(custom_query.description)
                         
-                        if active_docnum:
-                            st.info(f"📋 Ejecutando consulta con DocNum: **{active_docnum}**")
+                        st.info(f"📋 Ejecutando consulta con DocNum: **{active_docnum}**")
+                        
+                        sql_lower = custom_query.sql_query.lower()
+                        has_sap_tables = any(t in sql_lower for t in ['opor', 'por1', 'opqt', 'pqt1'])
+                        
+                        from config.database_sap import get_sap_connection
+                        sap_conn = None
+                        try:
+                            sap_conn = get_sap_connection()
+                        except Exception:
+                            pass
                             
-                            sql_lower = custom_query.sql_query.lower()
-                            has_sap_tables = any(t in sql_lower for t in ['opor', 'por1', 'opqt', 'pqt1'])
-                            
-                            from config.database_sap import get_sap_connection
-                            sap_conn = None
-                            try:
-                                sap_conn = get_sap_connection()
-                            except Exception:
-                                pass
-                                
-                            df_erp = pd.DataFrame()
-                            if has_sap_tables and not sap_conn:
-                                df_erp = DataLoaderService.get_sap_document_details(db, active_docnum)
-                            else:
-                                if sap_conn:
-                                    try:
-                                        query_to_run = custom_query.sql_query
-                                        params = []
-                                        if ":docnum" in query_to_run:
-                                            query_to_run = query_to_run.replace(":docnum", "?")
-                                            params.append(active_docnum)
-                                        df_erp = pd.read_sql(query_to_run, sap_conn, params=params)
-                                    except Exception as e:
-                                        sap_conn = None
-                                
-                                if not sap_conn or df_erp.empty:
-                                    from sqlalchemy import text
-                                    try:
-                                        res = db.execute(text(custom_query.sql_query), {"docnum": active_docnum})
-                                        cols = res.keys()
-                                        rows = res.fetchall()
-                                        if rows:
-                                            df_erp = pd.DataFrame(rows, columns=cols)
-                                    except Exception as ex:
-                                        st.error(f"❌ Error al ejecutar la consulta SQL: {str(ex)}")
-                            
-                            if not df_erp.empty:
-                                st.dataframe(df_erp, use_container_width=True, hide_index=True)
-                            else:
-                                st.info(f"La consulta no retornó resultados para el DocNum {active_docnum}.")
+                        df_erp = pd.DataFrame()
+                        if has_sap_tables and not sap_conn:
+                            df_erp = DataLoaderService.get_sap_document_details(db, active_docnum)
                         else:
-                            st.info("💡 Por favor, configure y guarde el DocNum para visualizar los datos del ERP.")
-                    else:
-                        df_erp = DataLoaderService.get_sap_document_details(db, active_docnum)
-                        if not df_erp.empty:
-                            first_row = df_erp.iloc[0]
-                            c_e1, c_e2, c_e3 = st.columns(3)
-                            with c_e1:
-                                st.metric("Número SAP B1", str(first_row.get('Número SAP', active_docnum)))
-                            with c_e2:
-                                st.metric("Proveedor", str(first_row.get('Nombre Proveedor', '—')))
-                            with c_e3:
-                                monto = first_row.get('Monto Total USD', 0)
+                            if sap_conn:
                                 try:
-                                    st.metric("Total Documento", f"${float(monto):,.2f} USD")
-                                except Exception:
-                                    st.metric("Total Documento", str(monto))
-                            st.markdown("**Detalle de Partidas:**")
-                            cols_to_show = [c for c in ['Código Artículo', 'Descripción', 'Cantidad Solicitada', 'Cantidad Pendiente', 'Precio Unitario'] if c in df_erp.columns]
-                            st.dataframe(df_erp[cols_to_show], use_container_width=True, hide_index=True)
+                                    query_to_run = custom_query.sql_query
+                                    params = []
+                                    if ":docnum" in query_to_run:
+                                        query_to_run = query_to_run.replace(":docnum", "?")
+                                        params.append(active_docnum)
+                                    df_erp = pd.read_sql(query_to_run, sap_conn, params=params)
+                                except Exception as e:
+                                    sap_conn = None
+                            
+                            if not sap_conn or df_erp.empty:
+                                from sqlalchemy import text
+                                try:
+                                    res = db.execute(text(custom_query.sql_query), {"docnum": active_docnum})
+                                    cols = res.keys()
+                                    rows = res.fetchall()
+                                    if rows:
+                                        df_erp = pd.DataFrame(rows, columns=cols)
+                                except Exception as ex:
+                                    st.error(f"❌ Error al ejecutar la consulta SQL: {str(ex)}")
+                        
+                        if not df_erp.empty:
+                            st.dataframe(df_erp, use_container_width=True, hide_index=True)
                         else:
-                            st.info(f"No se encontraron partidas activas en el ERP para el documento #{active_docnum}.")
-                except Exception as erp_ex:
-                    st.warning(f"No se pudo cargar la información del ERP: {str(erp_ex)}")
-            else:
-                st.info("💡 No hay DocNum registrado. Puede ingresarlo en el campo de arriba.")
-
-            st.markdown("---")
+                            st.info(f"La consulta no retornó resultados para el DocNum {active_docnum}.")
+                    except Exception as erp_ex:
+                        st.warning(f"No se pudo cargar la información del ERP: {str(erp_ex)}")
+                else:
+                    st.info("💡 Por favor, configure y guarde el DocNum para visualizar los datos del ERP.")
+                
+                st.markdown("---")
 
             # ── Section 2: Node Instructions ────────────────────────────────────────
             node_desc = task.node.description or ""

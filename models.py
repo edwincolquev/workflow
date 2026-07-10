@@ -102,6 +102,7 @@ class WorkflowTask(Base):
     assigned_user_id = Column(Integer, ForeignKey('wf_user.id'), nullable=True)
     status = Column(String(20), default='PENDING')  # PENDING, COMPLETED, CANCELLED
     sla_hours = Column(Integer, nullable=True)
+    docnum = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
     completed_by_id = Column(Integer, ForeignKey('wf_user.id'), nullable=True)

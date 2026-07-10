@@ -101,6 +101,7 @@ class WorkflowEngine:
                         assigned_role_id=curr_target.role_id,
                         status='PENDING',
                         sla_hours=curr_target.sla_hours, # Inherited from node config
+                        docnum=docnum_val,
                         created_at=datetime.utcnow()
                     )
                     db.add(task)
@@ -200,30 +201,7 @@ class WorkflowEngine:
         if instance.status != 'ACTIVE':
             raise ValueError("La instancia no está activa.")
 
-        # Update docnum and external_ref if provided
-        if docnum_value:
-            docnum_clean = docnum_value.strip()
-            if docnum_clean:
-                instance.docnum = docnum_clean
-                instance.external_ref = f"DocNum:{docnum_clean}"
-                
-                # Sincronizar automáticamente con la consulta activa si existe
-                if instance.current_node and instance.current_node.erp_query_id:
-                    from models import WorkflowInstanceQueryDocNum
-                    q_docnum_record = db.query(WorkflowInstanceQueryDocNum).filter(
-                        WorkflowInstanceQueryDocNum.instance_id == instance_id,
-                        WorkflowInstanceQueryDocNum.query_id == instance.current_node.erp_query_id
-                    ).first()
-                    if not q_docnum_record:
-                        q_docnum_record = WorkflowInstanceQueryDocNum(
-                            instance_id=instance_id,
-                            query_id=instance.current_node.erp_query_id,
-                            docnum=docnum_clean
-                        )
-                        db.add(q_docnum_record)
-                    else:
-                        q_docnum_record.docnum = docnum_clean
-
+        # 1.5 Load transition and current task
         transition = db.query(WorkflowTransition).filter(WorkflowTransition.id == transition_id).first()
         if not transition or transition.process_id != instance.process_id:
             raise ValueError("Transición no válida para el estado actual de la instancia.")
@@ -238,13 +216,36 @@ class WorkflowEngine:
             if source_node.role_id not in user_role_ids:
                 raise ValueError("El usuario no tiene el rol requerido para esta acción.")
 
-        # 2. Complete the current pending task for this node
         current_task = db.query(WorkflowTask).filter(
             WorkflowTask.instance_id == instance_id,
             WorkflowTask.node_id == source_node.id,
             WorkflowTask.status == 'PENDING'
         ).first()
 
+        # Update docnum on current task and instance if provided
+        active_docnum = None
+        if current_task:
+            active_docnum = current_task.docnum
+
+        if docnum_value:
+            docnum_clean = docnum_value.strip()
+            if docnum_clean:
+                active_docnum = docnum_clean
+                if current_task:
+                    current_task.docnum = docnum_clean
+                    if current_task.node.erp_query_id is not None:
+                        other_tasks = db.query(WorkflowTask).join(WorkflowTask.node).filter(
+                            WorkflowTask.instance_id == instance_id,
+                            WorkflowNode.erp_query_id == current_task.node.erp_query_id
+                        ).all()
+                        for ot in other_tasks:
+                            ot.docnum = docnum_clean
+
+        if active_docnum:
+            instance.docnum = active_docnum
+            instance.external_ref = f"DocNum:{active_docnum}"
+
+        # 2. Complete the current pending task for this node
         if current_task:
             current_task.status = 'COMPLETED'
             current_task.completed_at = datetime.utcnow()
@@ -327,6 +328,18 @@ class WorkflowEngine:
             if curr_target.type == 'END':
                 completed_workflow = True
             elif curr_target.type in ['TASK', 'DECISION']:
+                # Determine initial docnum for the target node based on shared custom query
+                target_docnum = None
+                if curr_target.erp_query_id is not None:
+                    existing_docnum_task = db.query(WorkflowTask).join(WorkflowTask.node).filter(
+                        WorkflowTask.instance_id == instance_id,
+                        WorkflowNode.erp_query_id == curr_target.erp_query_id,
+                        WorkflowTask.docnum != None,
+                        WorkflowTask.docnum != ""
+                    ).first()
+                    if existing_docnum_task:
+                        target_docnum = existing_docnum_task.docnum
+                
                 # Create a new pending task for the destination role
                 new_task = WorkflowTask(
                     instance_id=instance_id,
@@ -334,6 +347,7 @@ class WorkflowEngine:
                     assigned_role_id=curr_target.role_id,
                     status='PENDING',
                     sla_hours=curr_target.sla_hours, # Inherited from node config
+                    docnum=target_docnum,
                     created_at=datetime.utcnow()
                 )
                 db.add(new_task)

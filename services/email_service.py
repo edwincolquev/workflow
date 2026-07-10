@@ -192,7 +192,21 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
     # ── Check and generate SQL report PDF if applicable ────────────────────────
     pdf_data = None
     pdf_filename = None
-    if inst.external_ref:
+    if task.docnum:
+        try:
+            doc_num = int(str(task.docnum).strip())
+            df, _ = DataLoaderService.get_transitos_with_workflow(db)
+            df_filtered = df[df['DocNum'] == doc_num]
+            if not df_filtered.empty:
+                pdf_filename = f"Reporte_Transito_{doc_num}.pdf"
+                pdf_data = ExportService.to_pdf(
+                    title=f"Reporte de Tránsito - OC {doc_num}",
+                    subtitle=f"Proveedor: {df_filtered.iloc[0].get('Nombre Proveedor', '')} - Fabricante: {df_filtered.iloc[0].get('Fabricante', '')}",
+                    df=df_filtered
+                )
+        except Exception as ex:
+            print(f"Error generating automatic PDF attachment from task docnum: {str(ex)}")
+    elif inst.external_ref:
         try:
             if inst.external_ref.startswith("DocNum:"):
                 doc_num = int(inst.external_ref.split(":")[1])
@@ -328,6 +342,15 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
             <!-- END_SLA_PROGRESS_BAR -->
             """
 
+        # Conditionally display DocNum row if node has a custom query config
+        docnum_row_html = ""
+        if task.node.erp_query_id is not None:
+            docnum_row_html = f"""
+                      <tr>
+                          <td style="padding: 3px 0; color: #64748b;"><b>DocNum:</b></td>
+                          <td style="padding: 3px 0; color: #0f172a;"><code>{task.docnum or 'N/A'}</code></td>
+                      </tr>"""
+
         # ── Build full HTML email ──────────────────────────────────────────────
         html_content = f"""
         <html>
@@ -355,10 +378,7 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
                           <td style="padding: 3px 0; color: #64748b;"><b>Etapa Asignada:</b></td>
                           <td style="padding: 3px 0; color: #0f172a;"><span style="background-color: #fef3c7; color: #d97706; padding: 1px 6px; border-radius: 4px; font-weight: bold; font-size: 11px;">{task_name}</span></td>
                       </tr>
-                      <tr>
-                          <td style="padding: 3px 0; color: #64748b;"><b>DocNum:</b></td>
-                          <td style="padding: 3px 0; color: #0f172a;"><code>{inst.docnum or 'N/A'}</code></td>
-                      </tr>
+                      {docnum_row_html}
                       <tr>
                           <td style="padding: 3px 0; color: #64748b;"><b>Rol Asignado:</b></td>
                           <td style="padding: 3px 0; color: #0f172a;">{role.name}</td>

@@ -140,10 +140,14 @@ with get_db() as db:
                     if st.button("Eliminar Regla", key="delete_rule_btn", disabled=not delete_id, use_container_width=True):
                         t_del = db.query(WorkflowTransition).filter(WorkflowTransition.id == delete_id).first()
                         if t_del:
-                            db.delete(t_del)
-                            db.commit()
-                            st.success(f"Regla de transición ID {delete_id} eliminada.")
-                            st.rerun()
+                            try:
+                                db.delete(t_del)
+                                db.commit()
+                                st.success(f"Regla de transición ID {delete_id} eliminada.")
+                                st.rerun()
+                            except Exception as ex:
+                                db.rollback()
+                                st.error(f"❌ Error al eliminar la transición: {str(ex)}")
 
             st.markdown("---")
             st.markdown("##### ➕ Agregar Regla de Transición")
@@ -170,10 +174,14 @@ with get_db() as db:
                             action_name=action_name.strip(),
                             target_node_id=target_node_id
                         )
-                        db.add(new_t)
-                        db.commit()
-                        st.success("¡Transición agregada con éxito!")
-                        st.rerun()
+                        try:
+                            db.add(new_t)
+                            db.commit()
+                            st.success("¡Transición agregada con éxito!")
+                            st.rerun()
+                        except Exception as ex:
+                            db.rollback()
+                            st.error(f"❌ Error al guardar la transición: {str(ex)}")
 
             st.markdown("---")
             st.markdown("### 🔍 Visualización del Flujo (Mermaid)")
@@ -331,10 +339,14 @@ with get_db() as db:
                                 template_file_path=t_path,
                                 erp_query_id=n_query if n_query != 0 else None
                             )
-                            db.add(new_node)
-                            db.commit()
-                            st.success(f"Nodo '{n_name}' creado exitosamente.")
-                            st.rerun()
+                            try:
+                                db.add(new_node)
+                                db.commit()
+                                st.success(f"Nodo '{n_name}' creado exitosamente.")
+                                st.rerun()
+                            except Exception as ex:
+                                db.rollback()
+                                st.error(f"❌ Error al crear el nodo: {str(ex)}")
                             
             with t_edit_n:
                 if not p_nodes:
@@ -433,9 +445,13 @@ with get_db() as db:
                                         edit_node.template_file_name = en_template.name
                                         edit_node.template_file_path = dest_path
                                         
-                                    db.commit()
-                                    st.success(f"Nodo '{en_name}' actualizado.")
-                                    st.rerun()
+                                    try:
+                                        db.commit()
+                                        st.success(f"Nodo '{en_name}' actualizado.")
+                                        st.rerun()
+                                    except Exception as ex:
+                                        db.rollback()
+                                        st.error(f"❌ Error al actualizar el nodo: {str(ex)}")
                                     
             with t_del_n:
                 if not p_nodes:

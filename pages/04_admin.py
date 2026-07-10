@@ -176,83 +176,12 @@ with get_db() as db:
                         st.rerun()
 
             st.markdown("---")
-            st.markdown("##### 📋 Secuencia Cronológica de Transiciones")
-            
-            # BFS to assign step indices and order transitions chronologically
-            start_node = db.query(WorkflowNode).filter(
-                WorkflowNode.process_id == selected_proc.id,
-                WorkflowNode.type == 'START'
-            ).first()
-            
-            ordered_transitions = []
-            if start_node:
-                visited_nodes = set()
-                queue = [start_node.id]
-                node_steps = {start_node.id: 1}
-                
-                adj_trans = {}
-                for t in transitions:
-                    adj_trans.setdefault(t.source_node_id, []).append(t)
-                    
-                added_trans_ids = set()
-                while queue:
-                    curr_node_id = queue.pop(0)
-                    if curr_node_id in visited_nodes:
-                        continue
-                    visited_nodes.add(curr_node_id)
-                    
-                    curr_step = node_steps.get(curr_node_id, 1)
-                    trans_list = adj_trans.get(curr_node_id, [])
-                    for t in trans_list:
-                        if t.id not in added_trans_ids:
-                            ordered_transitions.append((t, curr_step))
-                            added_trans_ids.add(t.id)
-                            
-                            if t.target_node_id not in node_steps:
-                                node_steps[t.target_node_id] = curr_step + 1
-                            queue.append(t.target_node_id)
-                
-                # Add any transitions not reached by BFS
-                step_counter = max(node_steps.values()) + 1 if node_steps else 1
-                for t in transitions:
-                    if t.id not in added_trans_ids:
-                        ordered_transitions.append((t, step_counter))
-                        added_trans_ids.add(t.id)
+            st.markdown("### 🔍 Visualización del Flujo (Mermaid)")
+            mermaid_code = generate_mermaid(nodes, transitions)
+            if mermaid_code:
+                st.markdown(f"```mermaid\n{mermaid_code}\n```")
             else:
-                ordered_transitions = [(t, idx + 1) for idx, t in enumerate(transitions)]
-                
-            grid_rows = []
-            ordered_transitions.sort(key=lambda x: x[1])
-            
-            for idx, (t, step) in enumerate(ordered_transitions):
-                row = {
-                    'Paso': idx + 1
-                }
-                for r in all_roles:
-                    row[r.name] = ""
-                
-                actor_role = t.source_node.role.name if t.source_node.role else None
-                target_role = t.target_node.role.name if t.target_node.role else actor_role
-                
-                if actor_role and actor_role in row:
-                    if actor_role == target_role or not target_role:
-                        row[actor_role] = f"{t.action_name} ➔ {t.target_node.name}"
-                    else:
-                        row[actor_role] = t.action_name
-                if target_role and target_role in row and actor_role != target_role:
-                    row[target_role] = t.target_node.name
-                    
-                grid_rows.append(row)
-                
-            if grid_rows:
-                df_grid = pd.DataFrame(grid_rows)
-                cols = ['Paso'] + [r.name for r in all_roles]
-                cols = [c for c in cols if c in df_grid.columns]
-                df_grid = df_grid[cols]
-                
-                st.dataframe(df_grid, use_container_width=True, hide_index=True)
-            else:
-                st.info("No hay transiciones para armar el reporte de secuencia.")
+                st.info("Agregue nodos y transiciones para visualizar el diagrama.")
 
     # ==========================================
     # TAB 2: PROCESOS Y NODOS

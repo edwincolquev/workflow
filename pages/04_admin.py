@@ -9,7 +9,7 @@ from database import get_db
 from models import (
     WorkflowProcess, WorkflowNode, WorkflowTransition, 
     WorkflowUser, WorkflowRole, WorkflowInstance, WorkflowTask,
-    WorkflowEmailLog, WorkflowErpQuery, WorkflowInstanceQueryDocNum
+    WorkflowEmailLog, WorkflowErpQuery, WorkflowInstanceQueryDocNum, WorkflowBrand
 )
 from components.ui_helpers import UIHelpers
 from config.settings import ROLE_ACCESS
@@ -36,8 +36,8 @@ st.markdown("<h1 class='main-header'>⚙️ Configuración & Administración</h1
 st.markdown("<p style='color: #64748b;'>Configure el motor de workflow, valide la estructura lógica de los procesos, gestione la matriz de transiciones y cuentas de usuario.</p>", unsafe_allow_html=True)
 
 # Tabs
-t_transitions, t_processes, t_users, t_queries, t_email_audit = st.tabs([
-    "🔀 Matriz de Transiciones", "📋 Procesos y Nodos", "👥 Usuarios y Roles", "🔍 Consultas ERP", "✉️ Auditoría de Correos"
+t_transitions, t_processes, t_users, t_queries, t_email_audit, t_brands = st.tabs([
+    "🔀 Matriz de Transiciones", "📋 Procesos y Nodos", "👥 Usuarios y Roles", "🔍 Consultas ERP", "✉️ Auditoría de Correos", "🏷️ Categorías de Marcas"
 ])
 
 def generate_mermaid(nodes, transitions):
@@ -906,3 +906,135 @@ with get_db() as db:
                             pass
                 
                 st.components.v1.html(html_content, height=450, scrolling=True)
+
+    # ==========================================
+    # TAB 6: CATEGORÍAS DE MARCAS
+    # ==========================================
+    with t_brands:
+        st.markdown("<div class='section-header'>🏷️ Administración de Marcas y Categorías</div>", unsafe_allow_html=True)
+        st.markdown("<p style='color: #64748b; font-size: 0.9rem;'>Gestione la lista de marcas asociadas a los procesos de la cadena de suministro, su leadtime de referencia y la unidad de negocio a la que pertenecen.</p>", unsafe_allow_html=True)
+
+        col_left, col_right = st.columns([1.2, 0.8])
+
+        with col_left:
+            st.markdown("##### 📋 Listado de Marcas")
+            search_query = st.text_input("🔍 Buscar Marca o Unidad de Negocio:", placeholder="Ej. 3M, C-MOVIL...", key="brand_search_input")
+            
+            # Fetch all brands
+            brands_query = db.query(WorkflowBrand)
+            if search_query.strip():
+                q = f"%{search_query.strip()}%"
+                brands_query = brands_query.filter(
+                    (WorkflowBrand.name.like(q)) | (WorkflowBrand.u_negocio.like(q))
+                )
+            
+            all_brands = brands_query.order_by(WorkflowBrand.name).all()
+
+            if not all_brands:
+                st.info("No se encontraron marcas configuradas.")
+            else:
+                brands_list = []
+                for b in all_brands:
+                    brands_list.append({
+                        "ID": b.id,
+                        "Marca": b.name,
+                        "Unidad de Negocio": b.u_negocio,
+                        "Leadtime Ref. (Días)": b.leadtime,
+                        "Estado": "Activa" if b.active else "Inactiva"
+                    })
+                df_brands = pd.DataFrame(brands_list)
+                st.dataframe(df_brands, use_container_width=True, hide_index=True)
+
+        with col_right:
+            # Action tabs inside sidebar/right column
+            brand_action = st.radio("Acción:", ["Agregar Nueva Marca", "Editar/Desactivar Marca"], horizontal=True, key="brand_action_radio")
+
+            if brand_action == "Agregar Nueva Marca":
+                st.markdown("##### ➕ Nueva Marca")
+                with st.form("add_brand_form"):
+                    b_name = st.text_input("Nombre de la Marca *", placeholder="Ej. 3M, MICHELIN")
+                    b_un = st.selectbox(
+                        "Unidad de Negocio *", 
+                        options=["C-MOVIL", "NOVAPARTES", "PROLINE", "Otro"],
+                        key="add_brand_un_select"
+                    )
+                    b_un_custom = st.text_input("Escriba la Unidad de Negocio * (Si seleccionó 'Otro')", placeholder="Ej. RETAIL")
+
+                    b_lt = st.number_input("Leadtime de Referencia (Días) *", min_value=0, max_value=365, value=30, step=1)
+                    b_active = st.checkbox("Activa", value=True)
+
+                    btn_add = st.form_submit_button("Guardar Marca", type="primary", use_container_width=True)
+
+                    if btn_add:
+                        final_un = b_un_custom.strip().upper() if b_un == "Otro" else b_un
+                        if not b_name.strip():
+                            st.error("El nombre de la marca es obligatorio.")
+                        elif b_un == "Otro" and not b_un_custom.strip():
+                            st.error("Debe especificar la unidad de negocio.")
+                        else:
+                            # Check uniqueness
+                            existing = db.query(WorkflowBrand).filter(WorkflowBrand.name == b_name.strip().upper()).first()
+                            if existing:
+                                st.error(f"Ya existe una marca llamada '{b_name.strip().upper()}'.")
+                            else:
+                                new_b = WorkflowBrand(
+                                    name=b_name.strip().upper(),
+                                    u_negocio=final_un,
+                                    leadtime=int(b_lt),
+                                    active=b_active
+                                )
+                                db.add(new_b)
+                                db.commit()
+                                st.success(f"¡Marca '{b_name.strip().upper()}' creada con éxito!")
+                                st.rerun()
+
+            else:
+                st.markdown("##### ✏️ Editar Marca")
+                # Reload active/inactive brands for selectbox
+                all_select_brands = db.query(WorkflowBrand).order_by(WorkflowBrand.name).all()
+                if not all_select_brands:
+                    st.info("No hay marcas disponibles para editar.")
+                else:
+                    selected_b_id = st.selectbox(
+                        "Seleccione Marca a Editar:",
+                        options=[b.id for b in all_select_brands],
+                        format_func=lambda x: next(f"{b.name} ({b.u_negocio})" for b in all_select_brands if b.id == x),
+                        key="edit_brand_select"
+                    )
+                    
+                    selected_brand = db.query(WorkflowBrand).filter(WorkflowBrand.id == selected_b_id).first()
+                    
+                    if selected_brand:
+                        with st.form("edit_brand_form"):
+                            eb_name = st.text_input("Nombre de la Marca", value=selected_brand.name)
+                            # Match index for selectbox
+                            un_options = ["C-MOVIL", "NOVAPARTES", "PROLINE", "Otro"]
+                            default_idx = un_options.index(selected_brand.u_negocio) if selected_brand.u_negocio in un_options else 3
+                            
+                            eb_un = st.selectbox("Unidad de Negocio", options=un_options, index=default_idx, key="edit_brand_un_select")
+                            eb_un_custom = st.text_input("Escriba la Unidad de Negocio * (Si seleccionó 'Otro')", value=selected_brand.u_negocio)
+
+                            eb_lt = st.number_input("Leadtime de Referencia (Días)", min_value=0, max_value=365, value=selected_brand.leadtime, step=1)
+                            eb_active = st.checkbox("Activa", value=selected_brand.active)
+
+                            btn_save = st.form_submit_button("Guardar Cambios", type="primary", use_container_width=True)
+
+                            if btn_save:
+                                final_un = eb_un_custom.strip().upper() if eb_un == "Otro" else eb_un
+                                if not eb_name.strip():
+                                    st.error("El nombre de la marca es obligatorio.")
+                                elif eb_un == "Otro" and not eb_un_custom.strip():
+                                    st.error("Debe especificar la unidad de negocio.")
+                                else:
+                                    # Check uniqueness if name changed
+                                    name_changed = eb_name.strip().upper() != selected_brand.name
+                                    if name_changed and db.query(WorkflowBrand).filter(WorkflowBrand.name == eb_name.strip().upper()).first():
+                                        st.error(f"Ya existe otra marca llamada '{eb_name.strip().upper()}'.")
+                                    else:
+                                        selected_brand.name = eb_name.strip().upper()
+                                        selected_brand.u_negocio = final_un
+                                        selected_brand.leadtime = int(eb_lt)
+                                        selected_brand.active = eb_active
+                                        db.commit()
+                                        st.success("¡Cambios guardados con éxito!")
+                                        st.rerun()

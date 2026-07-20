@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 from database import get_db
-from models import WorkflowInstance, WorkflowTask, WorkflowNode, WorkflowRole, WorkflowProcess, WorkflowObjective
+from models import WorkflowInstance, WorkflowTask, WorkflowNode, WorkflowRole, WorkflowProcess, WorkflowObjective, WorkflowBrand
 from components.ui_helpers import UIHelpers
 from config.settings import ROLE_ACCESS
 
@@ -42,19 +42,48 @@ with get_db() as db:
     # Check if we have active/completed instances in SQLite to decide if we show real or simulated stats
     has_real_data = len(instances) > 0 and any(i.status == 'COMPLETED' for i in instances)
     
-    # ─── 0. PROCESS FILTER DROPDOWN ──────────────────────────────────────────
+    # Fetch active brands and BUs
+    all_brands = db.query(WorkflowBrand).filter(WorkflowBrand.active == True).all()
+    business_units = sorted(list(set(b.u_negocio for b in all_brands)))
+
+    # ─── 0. PROCESS & CATEGORY FILTERS ──────────────────────────────────────────
     st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True)
-    process_options = ["Todos los Procesos"] + [p.name for p in processes]
     
-    # Fallback to make sure options are correct even in simulation
-    if not processes and not has_real_data:
-        process_options = ["Todos los Procesos", "Importaciones", "Items Nuevos"]
+    col_f1, col_f2, col_f3 = st.columns(3)
+    
+    with col_f1:
+        process_options = ["Todos los Procesos"] + [p.name for p in processes]
+        if not processes and not has_real_data:
+            process_options = ["Todos los Procesos", "Importaciones", "Items Nuevos"]
+        selected_process_name = st.selectbox(
+            "🔍 Proceso:", 
+            process_options,
+            index=0,
+            key="dash_filter_process"
+        )
         
-    selected_process_name = st.selectbox(
-        "🔍 Filtrar Análisis por Proceso:", 
-        process_options,
-        index=0
-    )
+    with col_f2:
+        bu_options = ["Todas las Unidades"] + business_units
+        selected_bu = st.selectbox(
+            "🏢 Unidad de Negocio:",
+            bu_options,
+            index=0,
+            key="dash_filter_bu"
+        )
+        
+    with col_f3:
+        if selected_bu != "Todas las Unidades":
+            filtered_brands = [b for b in all_brands if b.u_negocio == selected_bu]
+        else:
+            filtered_brands = all_brands
+        brand_options = ["Todas las Marcas"] + sorted([b.name for b in filtered_brands])
+        selected_brand_name = st.selectbox(
+            "🏷️ Marca:",
+            brand_options,
+            index=0,
+            key="dash_filter_brand"
+        )
+        
     st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
     
     # ─── 1. EXTRACT DATA & CALCULATE METRICS ─────────────────────────────────
@@ -62,12 +91,23 @@ with get_db() as db:
         # Filter DB records based on selected process
         selected_proc = next((p for p in processes if p.name == selected_process_name), None)
         
+        # Start with all instances
+        instances_filtered = instances
+        
         if selected_proc:
-            instances_filtered = [i for i in instances if i.process_id == selected_proc.id]
-            tasks_filtered = [t for t in tasks if t.instance.process_id == selected_proc.id]
-        else:
-            instances_filtered = instances
-            tasks_filtered = tasks
+            instances_filtered = [i for i in instances_filtered if i.process_id == selected_proc.id]
+            
+        # Filter by Business Unit
+        if selected_bu != "Todas las Unidades":
+            instances_filtered = [i for i in instances_filtered if i.brand and i.brand.u_negocio == selected_bu]
+            
+        # Filter by Brand
+        if selected_brand_name != "Todas las Marcas":
+            instances_filtered = [i for i in instances_filtered if i.brand and i.brand.name == selected_brand_name]
+            
+        # Filter tasks based on filtered instances
+        filtered_instance_ids = {i.id for i in instances_filtered}
+        tasks_filtered = [t for t in tasks if t.instance_id in filtered_instance_ids]
 
         # LIVE DATA CALCULATIONS
         active_count = sum(1 for i in instances_filtered if i.status == 'ACTIVE')
@@ -429,6 +469,71 @@ with get_db() as db:
             )
             st.plotly_chart(fig_participation, use_container_width=True)
 
+    # ─── 3.5. CHARTS ROW 1.5: BUSINESS UNIT & BRAND DISTRIBUTION ──────────────
+    st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+    c_bu, c_brand = st.columns(2)
+    
+    with c_bu:
+        st.markdown("<div class='section-header'>🏢 Volumen de Procesos por Unidad de Negocio</div>", unsafe_allow_html=True)
+        bu_counts = {}
+        for inst in instances_filtered:
+            bu = inst.brand.u_negocio if inst.brand else "Sin Clasificar"
+            bu_counts[bu] = bu_counts.get(bu, 0) + 1
+        
+        if not bu_counts:
+            st.info("No hay datos por Unidad de Negocio para este filtro.")
+        else:
+            df_bu_chart = pd.DataFrame([{'Unidad de Negocio': k, 'Cantidad': v} for k, v in bu_counts.items()])
+            fig_bu = px.bar(
+                df_bu_chart,
+                x='Unidad de Negocio',
+                y='Cantidad',
+                color='Cantidad',
+                color_continuous_scale=px.colors.sequential.Teal,
+                text='Cantidad',
+                labels={'Cantidad': 'Cantidad'}
+            )
+            fig_bu.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                margin=dict(l=20, r=20, t=10, b=20),
+                coloraxis_showscale=False,
+                height=300
+            )
+            fig_bu.update_traces(textposition='outside')
+            st.plotly_chart(fig_bu, use_container_width=True)
+
+    with c_brand:
+        st.markdown("<div class='section-header'>🏷️ Top 10 Marcas por Volumen de Procesos</div>", unsafe_allow_html=True)
+        brand_counts = {}
+        for inst in instances_filtered:
+            b_name = inst.brand.name if inst.brand else "Sin Clasificar"
+            brand_counts[b_name] = brand_counts.get(b_name, 0) + 1
+            
+        if not brand_counts:
+            st.info("No hay datos por Marca para este filtro.")
+        else:
+            sorted_brands = sorted(brand_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+            df_brand_chart = pd.DataFrame([{'Marca': k, 'Cantidad': v} for k, v in sorted_brands])
+            fig_brand = px.bar(
+                df_brand_chart,
+                x='Marca',
+                y='Cantidad',
+                color='Cantidad',
+                color_continuous_scale=px.colors.sequential.Viridis,
+                text='Cantidad',
+                labels={'Cantidad': 'Cantidad'}
+            )
+            fig_brand.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                margin=dict(l=20, r=20, t=10, b=20),
+                coloraxis_showscale=False,
+                height=300
+            )
+            fig_brand.update_traces(textposition='outside')
+            st.plotly_chart(fig_brand, use_container_width=True)
+
     # ─── 4. CHARTS ROW 2: BOTTLENECKS & ACTIVE SLA ────────────────────────────
     st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
     c_bottleneck_left, c_bottleneck_right = st.columns([1.2, 0.8])
@@ -519,6 +624,74 @@ with get_db() as db:
                 'background-color': '#fff5f5',
                 'color': '#742a2a',
                 'border-color': '#fed7d7'
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+
+    # ─── 6.5. BRAND LEADTIME COMPARISON TABLE ─────────────────────────────────
+    st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>⏱️ Comparativa de Tiempos de Ciclo vs Leadtime de Referencia por Marca</div>", unsafe_allow_html=True)
+    
+    if has_real_data:
+        brand_completed = {}
+        for inst in completed_instances:
+            if inst.brand and inst.created_at and inst.updated_at:
+                dur_days = (inst.updated_at - inst.created_at).total_seconds() / 86400.0
+                if inst.brand.id not in brand_completed:
+                    brand_completed[inst.brand.id] = {
+                        "name": inst.brand.name,
+                        "u_negocio": inst.brand.u_negocio,
+                        "ref_leadtime": inst.brand.leadtime,
+                        "durations": []
+                    }
+                brand_completed[inst.brand.id]["durations"].append(dur_days)
+                
+        comparison_rows = []
+        for b_id, data in brand_completed.items():
+            avg_real = sum(data["durations"]) / len(data["durations"])
+            ref = data["ref_leadtime"]
+            diff = avg_real - ref
+            
+            if diff > 0:
+                status_str = f"⚠️ Excedido (+{diff:.1f}d)"
+            else:
+                status_str = f"✅ En Tiempo ({diff:.1f}d)"
+                
+            comparison_rows.append({
+                "Marca": data["name"],
+                "Unidad de Negocio": data["u_negocio"],
+                "Ciclo Promedio Real (Días)": round(avg_real, 1),
+                "Leadtime de Referencia (Días)": ref,
+                "Desviación (Días)": round(diff, 1),
+                "Estado": status_str
+            })
+            
+        if not comparison_rows:
+            st.info("No hay flujos finalizados con marcas asociadas para mostrar la comparación de leadtime.")
+        else:
+            df_comparison = pd.DataFrame(comparison_rows)
+            st.dataframe(
+                df_comparison.style.set_properties(**{
+                    'background-color': 'white',
+                    'color': '#334155',
+                    'border-color': '#e2e8f0'
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+    else:
+        # Simulated comparison data for preview look when has_real_data is false
+        df_sim_comp = pd.DataFrame([
+            {"Marca": "3M", "Unidad de Negocio": "C-MOVIL", "Ciclo Promedio Real (Días)": 24.5, "Leadtime de Referencia (Días)": 28, "Desviación (Días)": -3.5, "Estado": "✅ En Tiempo (-3.5d)"},
+            {"Marca": "WEGA", "Unidad de Negocio": "C-MOVIL", "Ciclo Promedio Real (Días)": 68.2, "Leadtime de Referencia (Días)": 65, "Desviación (Días)": 3.2, "Estado": "⚠️ Excedido (+3.2d)"},
+            {"Marca": "FRASLE", "Unidad de Negocio": "NOVAPARTES", "Ciclo Promedio Real (Días)": 115.0, "Leadtime de Referencia (Días)": 120, "Desviación (Días)": -5.0, "Estado": "✅ En Tiempo (-5.0d)"}
+        ])
+        st.dataframe(
+            df_sim_comp.style.set_properties(**{
+                'background-color': 'white',
+                'color': '#334155',
+                'border-color': '#e2e8f0'
             }),
             use_container_width=True,
             hide_index=True

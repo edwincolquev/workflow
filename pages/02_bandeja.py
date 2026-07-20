@@ -9,7 +9,7 @@ from database import get_db
 from models import (
     WorkflowTask, WorkflowInstance, WorkflowUser, WorkflowRole, WorkflowProcess, 
     WorkflowNode, WorkflowHistory, WorkflowTransition, WorkflowComment, WorkflowAttachment,
-    WorkflowErpQuery, WorkflowInstanceQueryDocNum
+    WorkflowErpQuery, WorkflowInstanceQueryDocNum, WorkflowBrand
 )
 from components.ui_helpers import UIHelpers
 from components.comments import CommentsComponent
@@ -117,6 +117,8 @@ with get_db() as db:
 
         # Fetch active processes
         active_processes = db.query(WorkflowProcess).filter(WorkflowProcess.active == True).order_by(WorkflowProcess.name).all()
+        # Fetch active brands
+        active_brands = db.query(WorkflowBrand).filter(WorkflowBrand.active == True).order_by(WorkflowBrand.name).all()
 
         if not active_processes:
             st.warning("No hay procesos configurados y activos. Contacta al administrador.")
@@ -134,6 +136,11 @@ with get_db() as db:
                         placeholder="Ej. Importación Proveedor ABC - Junio 2025"
                     )
                 with col2:
+                    selected_brand_id = st.selectbox(
+                        "Marca *",
+                        options=[b.id for b in active_brands],
+                        format_func=lambda x: next((f"{b.name} ({b.u_negocio})" for b in active_brands if b.id == x), str(x))
+                    )
                     docnum_input = st.text_input(
                         "DocNum (Opcional)",
                         placeholder="Ej. 10045"
@@ -168,7 +175,8 @@ with get_db() as db:
                                     process_id=selected_proc_id,
                                     title=process_title.strip(),
                                     creator_id=st.session_state.user['id'],
-                                    external_ref=external_ref
+                                    external_ref=external_ref,
+                                    brand_id=selected_brand_id
                                 )
                                 st.success(f"✅ Proceso **{new_instance.internal_code}** creado con éxito: *{process_title.strip()}*")
                                 st.session_state.selected_workflow_instance_id = new_instance.id
@@ -444,6 +452,10 @@ with get_db() as db:
 
             code_display = instance.internal_code or f"#{instance.id}"
 
+            brand_name = instance.brand.name if instance.brand else '—'
+            u_negocio = instance.brand.u_negocio if instance.brand else '—'
+            leadtime_ref = f"{instance.brand.leadtime} días" if instance.brand else '—'
+
             st.markdown(f"""
             <div class="glass-card" style="padding: 20px;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -458,6 +470,9 @@ with get_db() as db:
                     <div><b>Proceso:</b> {instance.process.name}</div>
                     <div><b>Código Interno:</b> {code_display}</div>
                     <div><b>DocNum:</b> {instance.docnum or '—'}</div>
+                    <div><b>Marca:</b> {brand_name}</div>
+                    <div><b>U. Negocio:</b> {u_negocio}</div>
+                    <div><b>Leadtime Ref:</b> {leadtime_ref}</div>
                     <div><b>Creado Por:</b> {instance.created_by.full_name}</div>
                     <div><b>Creado el:</b> {instance.created_at.strftime('%Y-%m-%d %H:%M')}</div>
                     <div><b>Última Actividad:</b> {instance.updated_at.strftime('%Y-%m-%d %H:%M')}</div>

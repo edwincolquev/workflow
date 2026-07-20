@@ -30,6 +30,14 @@ class WorkflowUser(Base):
     
     roles = relationship('WorkflowRole', secondary=user_role_association, back_populates='users')
 
+class WorkflowBrand(Base):
+    __tablename__ = 'wf_brand'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True, nullable=False)
+    u_negocio = Column(String(100), nullable=False)
+    leadtime = Column(Integer, nullable=False, default=0)
+    active = Column(Boolean, default=True)
+
 class WorkflowProcess(Base):
     __tablename__ = 'wf_process'
     id = Column(Integer, primary_key=True)
@@ -78,6 +86,7 @@ class WorkflowInstance(Base):
     title = Column(String(200), nullable=False)
     status = Column(String(20), default='ACTIVE')  # ACTIVE, COMPLETED, CANCELLED
     current_node_id = Column(Integer, ForeignKey('wf_node.id'), nullable=True)
+    brand_id = Column(Integer, ForeignKey('wf_brand.id', ondelete='SET NULL'), nullable=True)
     external_ref = Column(String(100), nullable=True) # e.g. 'DocNum:10045' or 'ItemCode:XYZ'
     docnum = Column(String(50), nullable=True)
     internal_code = Column(String(50), unique=True, nullable=True)
@@ -87,6 +96,7 @@ class WorkflowInstance(Base):
 
     process = relationship('WorkflowProcess', back_populates='instances')
     current_node = relationship('WorkflowNode')
+    brand = relationship('WorkflowBrand')
     created_by = relationship('WorkflowUser')
     tasks = relationship('WorkflowTask', back_populates='instance', cascade='all, delete-orphan')
     comments = relationship('WorkflowComment', back_populates='instance', cascade='all, delete-orphan')

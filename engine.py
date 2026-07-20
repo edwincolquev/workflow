@@ -8,7 +8,7 @@ from models import (
 
 class WorkflowEngine:
     @staticmethod
-    def create_instance(db: Session, process_id: int, title: str, creator_id: int, external_ref: str = None) -> WorkflowInstance:
+    def create_instance(db: Session, process_id: int, title: str, creator_id: int, external_ref: str = None, brand_id: int = None) -> WorkflowInstance:
         """
         Creates a new workflow instance for a process, sets it at the START node,
         and automatically advances it to the first task if a transition exists.
@@ -35,6 +35,7 @@ class WorkflowEngine:
             title=title,
             status='ACTIVE',
             current_node_id=start_node.id,
+            brand_id=brand_id,
             external_ref=external_ref,
             docnum=docnum_val,
             created_by_id=creator_id,

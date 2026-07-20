@@ -12,12 +12,17 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 DB_PATH = os.path.join(DB_DIR, 'workflow.db')
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DB_PATH}")
 
-engine = create_engine(
-    DATABASE_URL, 
-    connect_args={"check_same_thread": False, "timeout": 15}  # Needed for SQLite in multi-threaded Streamlit
-)
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        DATABASE_URL, 
+        connect_args={"check_same_thread": False, "timeout": 15}  # Needed for SQLite in multi-threaded Streamlit
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL
+    )
 
 # Enable SQLite foreign key support
 from sqlalchemy.engine import Engine
@@ -103,6 +108,12 @@ def init_db():
         # 7. Add docnum to wf_task
         try:
             conn.execute(text("ALTER TABLE wf_task ADD COLUMN docnum VARCHAR(50);"))
+        except Exception:
+            pass
+
+        # 8. Add brand_id to wf_instance
+        try:
+            conn.execute(text("ALTER TABLE wf_instance ADD COLUMN brand_id INTEGER REFERENCES wf_brand(id) ON DELETE SET NULL;"))
         except Exception:
             pass
         

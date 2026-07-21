@@ -18,6 +18,12 @@ class UIHelpers:
                 background: linear-gradient(135deg, #f4f6fa 0%, #eef1f6 100%);
             }
             
+            /* Reduce top space of the block container */
+            .block-container {
+                padding-top: 1.5rem !important;
+                padding-bottom: 2.0rem !important;
+            }
+            
             /* Glassmorphic Cards */
             .glass-card {
                 background: rgba(255, 255, 255, 0.7);

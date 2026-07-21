@@ -501,7 +501,7 @@ if not st.session_state.authenticated:
         </div>
         """, unsafe_allow_html=True)
 
-# 4. Welcoming Logged-in Interface
+# 4. Navigation & Pages routing
 else:
     # Sidebar Info
     st.sidebar.markdown(f"""
@@ -512,38 +512,16 @@ else:
     </div>
     """, unsafe_allow_html=True)
     
-    if st.sidebar.button("Cerrar Sesión"):
+    if st.sidebar.button("Cerrar Sesión", use_container_width=True):
         st.session_state.authenticated = False
         st.session_state.user = None
         st.rerun()
 
-    # Welcome landing page
-    st.markdown("<h1 class='main-header'>🏢 Portal de Control Operacional</h1>", unsafe_allow_html=True)
-    st.markdown("### Bienvenido al Sistema Integrado de Gestión de Workflows")
+    # Define pages
+    dashboard_page = st.Page("pages/01_dashboard.py", title="Dashboard", icon="📊", default=True)
+    bandeja_page = st.Page("pages/02_bandeja.py", title="Bandeja", icon="📥")
+    admin_page = st.Page("pages/04_admin.py", title="Admin", icon="⚙️")
     
-    st.write(
-        "Utilice la barra lateral para navegar a través de los diferentes módulos del motor "
-        "de workflows operacionales y paneles de control según sus permisos."
-    )
+    pg = st.navigation([dashboard_page, bandeja_page, admin_page])
+    pg.run()
 
-    st.markdown("---")
-
-    # Fast access cards based on roles
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("""
-        <div class="glass-card" style="min-height: 180px;">
-            <h4 style="color:#0f172a; margin-top:0;">📊 Analítica de Procesos (Dashboard)</h4>
-            <p style="color:#475569; font-size:0.9rem;">Consulte KPIs operativos, tiempos promedio de ciclo por etapa, cumplimiento de SLAs y balance de carga de trabajo por rol.</p>
-            <p style="font-size: 0.8rem; color:#64748b;"><i>Métricas automáticas basadas en el historial del motor.</i></p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with c2:
-        st.markdown("""
-        <div class="glass-card" style="min-height: 180px;">
-            <h4 style="color:#0f172a; margin-top:0;">🚢 Gestión y Operación de Tareas (Bandeja)</h4>
-            <p style="color:#475569; font-size:0.9rem;">Acceda a su bandeja personal de tareas pendientes, inicie flujos de trabajo, asigne documentos y cargue soportes o plantillas para avanzar las transiciones.</p>
-            <p style="font-size: 0.8rem; color:#64748b;"><i>Orquestador de procesos autónomo en SQLite y conexión ERP.</i></p>
-        </div>
-        """, unsafe_allow_html=True)

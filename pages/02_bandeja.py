@@ -30,6 +30,70 @@ if not ROLE_ACCESS.get(user_role, {}).get('bandeja', False):
 # Apply CSS
 UIHelpers.apply_custom_css()
 
+def get_brand_summary_dataframe(db):
+    """Calculates brand-level process metrics identical to the Dashboard comparison table."""
+    active_processes = db.query(WorkflowProcess).filter(WorkflowProcess.active == True).all()
+    active_process_ids = {p.id for p in active_processes}
+    
+    instances = db.query(WorkflowInstance).filter(WorkflowInstance.process_id.in_(active_process_ids)).all()
+    
+    brand_comparison = {}
+    for inst in instances:
+        b_name = inst.brand.name if inst.brand else "Sin Clasificar"
+        b_u_negocio = inst.brand.u_negocio if inst.brand else "Sin Clasificar"
+        b_leadtime = inst.brand.leadtime if inst.brand else 0
+        
+        if b_name not in brand_comparison:
+            brand_comparison[b_name] = {
+                "name": b_name,
+                "u_negocio": b_u_negocio,
+                "ref_leadtime": b_leadtime,
+                "iniciados": 0,
+                "finalizados": 0,
+                "abiertos": 0,
+                "durations": []
+            }
+        
+        brand_comparison[b_name]["iniciados"] += 1
+        if inst.status == "ACTIVE":
+            brand_comparison[b_name]["abiertos"] += 1
+        elif inst.status in ["COMPLETED", "CANCELLED"]:
+            brand_comparison[b_name]["finalizados"] += 1
+            if inst.created_at and inst.updated_at:
+                dur_days = (inst.updated_at - inst.created_at).total_seconds() / 86400.0
+                brand_comparison[b_name]["durations"].append(dur_days)
+                
+    comparison_rows = []
+    for b_name, data in brand_comparison.items():
+        avg_real = sum(data["durations"]) / len(data["durations"]) if data["durations"] else 0.0
+        ref = data["ref_leadtime"]
+        diff = avg_real - ref if ref > 0 and avg_real > 0 else 0.0
+        
+        if ref == 0:
+            status_str = "➖ N/A"
+        elif diff > 0:
+            status_str = f"⚠️ Excedido (+{diff:.1f}d)"
+        else:
+            status_str = f"✅ En Tiempo ({diff:.1f}d)"
+            
+        comparison_rows.append({
+            "Marca": b_name,
+            "Unidad de Negocio": data["u_negocio"],
+            "Iniciados": data["iniciados"],
+            "Finalizados": data["finalizados"],
+            "Abiertos": data["abiertos"],
+            "Ciclo Promedio Real (Días)": round(avg_real, 1) if avg_real > 0 else 0.0,
+            "Leadtime de Referencia (Días)": ref,
+            "Desviación (Días)": round(diff, 1) if ref > 0 and avg_real > 0 else 0.0,
+            "Estado": status_str
+        })
+        
+    if not comparison_rows:
+        return pd.DataFrame()
+        
+    df_comparison = pd.DataFrame(comparison_rows)
+    return df_comparison.sort_values(by="Desviación (Días)", ascending=False)
+
 # Sidebar User Info
 st.sidebar.markdown(f"**Usuario:** {st.session_state.user['full_name']}")
 st.sidebar.markdown(f"**Rol:** {st.session_state.user['role']}")
@@ -54,15 +118,50 @@ with get_db() as db:
         if not user_role_ids:
             st.warning("El usuario no tiene roles asignados.")
         else:
+            # Resumen de Tareas y Tiempos por Marca
+            st.markdown("##### 🏷️ Resumen de Tareas y Tiempos por Marca")
+            df_brands = get_brand_summary_dataframe(db)
+            selected_brand = None
+            
+            if not df_brands.empty:
+                event_brand = st.dataframe(
+                    df_brands.style.format({
+                        "Ciclo Promedio Real (Días)": "{:.1f}",
+                        "Desviación (Días)": "{:.1f}"
+                    }).set_properties(**{
+                        'background-color': 'white',
+                        'color': '#334155',
+                        'border-color': '#e2e8f0'
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key="brand_tasks_df"
+                )
+                if event_brand.selection["rows"]:
+                    selected_row_idx = event_brand.selection["rows"][0]
+                    selected_brand = df_brands.iloc[selected_row_idx]["Marca"]
+                    st.caption(f"Filtrando tareas de la marca: **{selected_brand}**")
+            
             all_pending = db.query(WorkflowTask).filter(WorkflowTask.status == 'PENDING').all()
             pending_tasks = [
                 t for t in all_pending
                 if (t.node.role_id if t.node.role_id is not None else t.assigned_role_id) in user_role_ids
             ]
+            
+            if selected_brand:
+                pending_tasks = [t for t in pending_tasks if (t.instance.brand.name if t.instance.brand else "Sin Clasificar") == selected_brand]
+                
             pending_tasks.sort(key=lambda x: x.created_at, reverse=True)
 
+            st.markdown("---")
+            st.markdown("##### 📥 Listado de Tareas Pendientes")
             if not pending_tasks:
-                st.info("🎉 ¡Excelente! No tienes tareas pendientes en tu bandeja de entrada.")
+                if selected_brand:
+                    st.info(f"No tienes tareas pendientes para la marca seleccionada: **{selected_brand}**.")
+                else:
+                    st.info("🎉 ¡Excelente! No tienes tareas pendientes en tu bandeja de entrada.")
             else:
                 st.markdown(f"Tienes **{len(pending_tasks)}** tareas que requieren tu atención.")
 
@@ -188,12 +287,51 @@ with get_db() as db:
     # TAB 3: PROCESOS ACTIVOS (TODOS)
     # ==========================================
     with t_active:
+        # Resumen de Procesos y Tiempos por Marca
+        st.markdown("##### 🏷️ Resumen de Procesos y Tiempos por Marca")
+        df_brands = get_brand_summary_dataframe(db)
+        selected_brand = None
+        
+        if not df_brands.empty:
+            event_brand = st.dataframe(
+                df_brands.style.format({
+                    "Ciclo Promedio Real (Días)": "{:.1f}",
+                    "Desviación (Días)": "{:.1f}"
+                }).set_properties(**{
+                    'background-color': 'white',
+                    'color': '#334155',
+                    'border-color': '#e2e8f0'
+                }),
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="brand_active_df"
+            )
+            if event_brand.selection["rows"]:
+                selected_row_idx = event_brand.selection["rows"][0]
+                selected_brand = df_brands.iloc[selected_row_idx]["Marca"]
+                st.caption(f"Filtrando procesos activos de la marca: **{selected_brand}**")
+
+        # Query all active instances belonging to active processes
+        active_processes = db.query(WorkflowProcess).filter(WorkflowProcess.active == True).all()
+        active_process_ids = {p.id for p in active_processes}
+        
         active_instances = db.query(WorkflowInstance).filter(
-            WorkflowInstance.status == 'ACTIVE'
+            WorkflowInstance.status == 'ACTIVE',
+            WorkflowInstance.process_id.in_(active_process_ids)
         ).order_by(WorkflowInstance.updated_at.desc()).all()
 
+        if selected_brand:
+            active_instances = [i for i in active_instances if (i.brand.name if i.brand else "Sin Clasificar") == selected_brand]
+
+        st.markdown("---")
+        st.markdown("##### 📋 Listado de Procesos Activos")
         if not active_instances:
-            st.info("No hay procesos activos en ejecución en este momento.")
+            if selected_brand:
+                st.info(f"No hay procesos activos para la marca seleccionada: **{selected_brand}**.")
+            else:
+                st.info("No hay procesos activos en ejecución en este momento.")
         else:
             from datetime import datetime
             data_active = []
@@ -277,12 +415,51 @@ with get_db() as db:
     # TAB 4: PROCESOS FINALIZADOS
     # ==========================================
     with t_completed:
+        # Resumen de Procesos y Tiempos por Marca
+        st.markdown("##### 🏷️ Resumen de Procesos y Tiempos por Marca")
+        df_brands = get_brand_summary_dataframe(db)
+        selected_brand = None
+        
+        if not df_brands.empty:
+            event_brand = st.dataframe(
+                df_brands.style.format({
+                    "Ciclo Promedio Real (Días)": "{:.1f}",
+                    "Desviación (Días)": "{:.1f}"
+                }).set_properties(**{
+                    'background-color': 'white',
+                    'color': '#334155',
+                    'border-color': '#e2e8f0'
+                }),
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="brand_closed_df"
+            )
+            if event_brand.selection["rows"]:
+                selected_row_idx = event_brand.selection["rows"][0]
+                selected_brand = df_brands.iloc[selected_row_idx]["Marca"]
+                st.caption(f"Filtrando procesos finalizados de la marca: **{selected_brand}**")
+
+        # Query all closed instances belonging to active processes
+        active_processes = db.query(WorkflowProcess).filter(WorkflowProcess.active == True).all()
+        active_process_ids = {p.id for p in active_processes}
+        
         closed_instances = db.query(WorkflowInstance).filter(
-            WorkflowInstance.status.in_(['COMPLETED', 'CANCELLED'])
+            WorkflowInstance.status.in_(['COMPLETED', 'CANCELLED']),
+            WorkflowInstance.process_id.in_(active_process_ids)
         ).order_by(WorkflowInstance.updated_at.desc()).all()
 
+        if selected_brand:
+            closed_instances = [i for i in closed_instances if (i.brand.name if i.brand else "Sin Clasificar") == selected_brand]
+
+        st.markdown("---")
+        st.markdown("##### ✅ Listado de Procesos Finalizados")
         if not closed_instances:
-            st.info("No hay procesos finalizados o cancelados.")
+            if selected_brand:
+                st.info(f"No hay procesos finalizados para la marca seleccionada: **{selected_brand}**.")
+            else:
+                st.info("No hay procesos finalizados o cancelados.")
         else:
             data_closed = []
             for inst in closed_instances:

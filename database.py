@@ -13,34 +13,42 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 DB_PATH = os.path.join(DB_DIR, 'workflow.db')
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+from collections.abc import Mapping
 
-if not DATABASE_URL:
+def _extract_db_url():
+    # 1. Environment variable
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        return url
+
+    # 2. Streamlit secrets (safely handling AttrDict / Secrets objects)
     try:
         import streamlit as st
         if hasattr(st, "secrets"):
-            if "DATABASE_URL" in st.secrets:
-                DATABASE_URL = st.secrets["DATABASE_URL"]
-            elif "email" in st.secrets and "DATABASE_URL" in st.secrets["email"]:
-                DATABASE_URL = st.secrets["email"]["DATABASE_URL"]
+            sec = st.secrets
+            # Top-level check
+            try:
+                if "DATABASE_URL" in sec:
+                    return sec["DATABASE_URL"]
+            except Exception:
+                pass
+            
+            # Search inside all sections (e.g. [email], [database], etc.)
+            try:
+                for key in sec:
+                    try:
+                        section = sec[key]
+                        if isinstance(section, (dict, Mapping)) or hasattr(section, "__getitem__"):
+                            if "DATABASE_URL" in section:
+                                return section["DATABASE_URL"]
+                    except Exception:
+                        pass
+            except Exception:
+                pass
     except Exception:
         pass
 
-if not DATABASE_URL:
-    secrets_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.streamlit', 'secrets.toml')
-    if os.path.exists(secrets_path):
-        try:
-            import tomllib
-            with open(secrets_path, "rb") as f:
-                secrets_data = tomllib.load(f)
-                if "DATABASE_URL" in secrets_data:
-                    DATABASE_URL = secrets_data["DATABASE_URL"]
-                elif "email" in secrets_data and "DATABASE_URL" in secrets_data["email"]:
-                    DATABASE_URL = secrets_data["email"]["DATABASE_URL"]
-        except Exception:
-            pass
-
-if not DATABASE_URL:
+    # 3. Direct parsing of .streamlit/secrets.toml
     secrets_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.streamlit', 'secrets.toml')
     if os.path.exists(secrets_path):
         try:
@@ -50,13 +58,13 @@ if not DATABASE_URL:
                     if line.startswith("DATABASE_URL") and "=" in line:
                         val = line.split("=", 1)[1].strip().strip('"').strip("'")
                         if val:
-                            DATABASE_URL = val
-                            break
+                            return val
         except Exception:
             pass
 
-if not DATABASE_URL:
-    DATABASE_URL = f"sqlite:///{DB_PATH}"
+    return None
+
+DATABASE_URL = _extract_db_url() or f"sqlite:///{DB_PATH}"
 
 if DATABASE_URL and "pgbouncer=true" in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("?pgbouncer=true", "").replace("&pgbouncer=true", "")

@@ -32,22 +32,18 @@ class AttachmentsComponent:
         if uploaded_file is not None:
             # Add upload button
             if st.button("Guardar Archivo Adjunto", key=f"save_file_btn_{instance_id}"):
-                # Create a unique filename
-                timestamp_prefix = datetime.now().strftime("%Y%m%d%H%M%S")
-                safe_filename = f"{timestamp_prefix}_{uploaded_file.name.replace(' ', '_')}"
-                dest_path = os.path.join(UPLOAD_DIR, safe_filename)
+                from services.storage_service import StorageService
                 
-                # Save file locally
-                with open(dest_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
+                file_bytes = uploaded_file.getbuffer().tobytes()
+                file_url_or_path = StorageService.upload_file(file_bytes, uploaded_file.name, folder="attachments")
                 
-                # Add record to DB (store absolute path for reliable retrieval)
+                # Add record to DB
                 new_attach = WorkflowAttachment(
                     instance_id=instance_id,
                     task_id=task_id,  # Links to the active task node if provided
                     user_id=user_id,
                     file_name=uploaded_file.name,
-                    file_path=dest_path,  # Full absolute path
+                    file_path=file_url_or_path,
                     file_size=uploaded_file.size,
                     created_at=datetime.utcnow()
                 )
@@ -75,26 +71,20 @@ class AttachmentsComponent:
         if not attachments:
             st.info("No hay archivos adjuntos en este flujo.")
         else:
+            from services.storage_service import StorageService
             for attach in attachments:
-                # Support both absolute paths (new) and relative filenames (legacy)
-                if os.path.isabs(attach.file_path):
-                    file_full_path = attach.file_path
-                else:
-                    file_full_path = os.path.join(UPLOAD_DIR, attach.file_path)
+                file_bytes = StorageService.get_file_bytes(attach.file_path)
                 
-                # Verify file exists on disk
-                if not os.path.exists(file_full_path):
-                    st.warning(f"El archivo '{attach.file_name}' no se encuentra físicamente.")
+                if not file_bytes:
+                    st.warning(f"El archivo '{attach.file_name}' no se encuentra disponible en el almacenamiento.")
                     continue
                     
-                # Read file for download button
-                with open(file_full_path, "rb") as file_bytes:
-                    btn = st.download_button(
-                        label=f"⬇️ Descargar: {attach.file_name} ({attach.file_size / 1024:.1f} KB)",
-                        data=file_bytes,
-                        file_name=attach.file_name,
-                        key=f"download_{attach.id}"
-                    )
+                st.download_button(
+                    label=f"⬇️ Descargar: {attach.file_name} ({attach.file_size / 1024:.1f} KB)",
+                    data=file_bytes,
+                    file_name=attach.file_name,
+                    key=f"download_{attach.id}"
+                )
                 
                 user_roles = ", ".join([role.name for role in attach.user.roles])
                 st.caption(f"Cargado por: {attach.user.full_name} ({user_roles}) el {attach.created_at.strftime('%Y-%m-%d %H:%M')}")

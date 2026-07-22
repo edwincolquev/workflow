@@ -429,40 +429,40 @@ def send_task_notification_email(db: Session, task: WorkflowTask, from_comment: 
             })
             
         # 1b. Node template attachment (if configured)
-        if task.node.template_file_path and os.path.exists(task.node.template_file_path):
+        if task.node.template_file_path:
             try:
-                with open(task.node.template_file_path, 'rb') as f:
-                    template_bytes = f.read()
-                ext = os.path.splitext(task.node.template_file_name)[1].lower()
-                mime_map = {
-                    '.pdf': 'application/pdf',
-                    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    '.xls': 'application/vnd.ms-excel',
-                    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    '.doc': 'application/msword',
-                    '.png': 'image/png',
-                    '.jpg': 'image/jpeg',
-                    '.jpeg': 'image/jpeg',
-                    '.zip': 'application/zip',
-                    '.csv': 'text/csv',
-                }
-                mime_type = mime_map.get(ext, 'application/octet-stream')
-                email_attachments.append({
-                    "data": template_bytes,
-                    "filename": task.node.template_file_name,
-                    "mime_type": mime_type
-                })
+                from services.storage_service import StorageService
+                template_bytes = StorageService.get_file_bytes(task.node.template_file_path)
+                if template_bytes:
+                    ext = os.path.splitext(task.node.template_file_name or "")[1].lower()
+                    mime_map = {
+                        '.pdf': 'application/pdf',
+                        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        '.xls': 'application/vnd.ms-excel',
+                        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        '.doc': 'application/msword',
+                        '.png': 'image/png',
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.zip': 'application/zip',
+                        '.csv': 'text/csv',
+                    }
+                    mime_type = mime_map.get(ext, 'application/octet-stream')
+                    email_attachments.append({
+                        "data": template_bytes,
+                        "filename": task.node.template_file_name or "plantilla",
+                        "mime_type": mime_type
+                    })
             except Exception as ex:
                 print(f"Could not attach node template file: {ex}")
         
-        # 2. Forwarded attachments from the previous node (read from disk)
+        # 2. Forwarded attachments from the previous node
         for att in from_attachments:
             try:
-                if os.path.exists(att.file_path):
-                    with open(att.file_path, 'rb') as f:
-                        file_bytes = f.read()
-                    # Infer MIME type from extension
-                    ext = os.path.splitext(att.file_name)[1].lower()
+                from services.storage_service import StorageService
+                file_bytes = StorageService.get_file_bytes(att.file_path)
+                if file_bytes:
+                    ext = os.path.splitext(att.file_name or "")[1].lower()
                     mime_map = {
                         '.pdf': 'application/pdf',
                         '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

@@ -317,15 +317,10 @@ with get_db() as db:
                             t_name = None
                             t_path = None
                             if n_template is not None:
-                                TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads', 'node_templates')
-                                os.makedirs(TEMPLATE_DIR, exist_ok=True)
-                                timestamp_prefix = datetime.now().strftime("%Y%m%d%H%M%S")
-                                safe_filename = f"{timestamp_prefix}_{n_template.name.replace(' ', '_')}"
-                                dest_path = os.path.join(TEMPLATE_DIR, safe_filename)
-                                with open(dest_path, "wb") as f:
-                                    f.write(n_template.getbuffer())
+                                from services.storage_service import StorageService
+                                file_bytes = n_template.getbuffer().tobytes()
+                                t_path = StorageService.upload_file(file_bytes, n_template.name, folder="node_templates")
                                 t_name = n_template.name
-                                t_path = dest_path
 
                             sla_val = n_sla if n_sla > 0 else None
                             new_node = WorkflowNode(
@@ -362,17 +357,17 @@ with get_db() as db:
                     edit_node = db.query(WorkflowNode).filter(WorkflowNode.id == edit_node_id).first() if edit_node_id else None
                     
                     if edit_node:
-                        import os
                         if edit_node.template_file_name:
                             st.info(f"📎 **Plantilla cargada actual:** `{edit_node.template_file_name}`")
-                            if os.path.exists(edit_node.template_file_path or ""):
-                                with open(edit_node.template_file_path, "rb") as f:
-                                    st.download_button(
-                                        label="⬇️ Descargar plantilla actual",
-                                        data=f.read(),
-                                        file_name=edit_node.template_file_name,
-                                        key=f"dl_template_{edit_node.id}"
-                                    )
+                            from services.storage_service import StorageService
+                            template_bytes = StorageService.get_file_bytes(edit_node.template_file_path)
+                            if template_bytes:
+                                st.download_button(
+                                    label="⬇️ Descargar plantilla actual",
+                                    data=template_bytes,
+                                    file_name=edit_node.template_file_name,
+                                    key=f"dl_template_{edit_node.id}"
+                                )
                                     
                         with st.form(f"edit_node_form_{edit_node.id}"):
                             en_name = st.text_input("Nombre del Nodo", value=edit_node.name)
@@ -428,22 +423,10 @@ with get_db() as db:
                                         edit_node.template_file_path = None
                                         
                                     if en_template is not None:
-                                        # Delete old file
-                                        if edit_node.template_file_path and os.path.exists(edit_node.template_file_path):
-                                            try:
-                                                os.remove(edit_node.template_file_path)
-                                            except:
-                                                pass
-                                                
-                                        TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads', 'node_templates')
-                                        os.makedirs(TEMPLATE_DIR, exist_ok=True)
-                                        timestamp_prefix = datetime.now().strftime("%Y%m%d%H%M%S")
-                                        safe_filename = f"{timestamp_prefix}_{en_template.name.replace(' ', '_')}"
-                                        dest_path = os.path.join(TEMPLATE_DIR, safe_filename)
-                                        with open(dest_path, "wb") as f:
-                                            f.write(en_template.getbuffer())
+                                        from services.storage_service import StorageService
+                                        file_bytes = en_template.getbuffer().tobytes()
+                                        edit_node.template_file_path = StorageService.upload_file(file_bytes, en_template.name, folder="node_templates")
                                         edit_node.template_file_name = en_template.name
-                                        edit_node.template_file_path = dest_path
                                         
                                     try:
                                         db.commit()

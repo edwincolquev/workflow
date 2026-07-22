@@ -342,18 +342,16 @@ if "token" in st.query_params:
                     else:
                         comment_text = comment_input.strip() + " (Resolución vía email)"
                         if uploaded_file is not None:
-                            UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
-                            timestamp_prefix = datetime.now().strftime("%Y%m%d%H%M%S")
-                            safe_filename = f"{timestamp_prefix}_{uploaded_file.name.replace(' ', '_')}"
-                            dest_path = os.path.join(UPLOAD_DIR, safe_filename)
-                            with open(dest_path, "wb") as f:
-                                f.write(uploaded_file.getbuffer())
+                            from services.storage_service import StorageService
+                            file_bytes = uploaded_file.getbuffer().tobytes()
+                            file_url_or_path = StorageService.upload_file(file_bytes, uploaded_file.name, folder="attachments")
+                            
                             db.add(WorkflowAttachment(
                                 instance_id=task.instance_id,
                                 task_id=task.id,
                                 user_id=user.id,
                                 file_name=uploaded_file.name,
-                                file_path=dest_path,
+                                file_path=file_url_or_path,
                                 file_size=uploaded_file.size,
                                 created_at=datetime.utcnow()
                             ))

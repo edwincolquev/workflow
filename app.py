@@ -5,8 +5,12 @@ from database import get_db, init_db
 from models import WorkflowUser, WorkflowTask, WorkflowNode, WorkflowTransition, WorkflowHistory
 from components.ui_helpers import UIHelpers
 
-# Initialize database tables automatically
-init_db()
+# Initialize database tables automatically (cached to run once per process)
+@st.cache_resource
+def _init_db_cached():
+    init_db()
+
+_init_db_cached()
 
 # 1. Config page first
 st.set_page_config(

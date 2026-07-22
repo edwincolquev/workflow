@@ -12,27 +12,76 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 DB_PATH = os.path.join(DB_DIR, 'workflow.db')
-DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DB_PATH}")
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+if not DATABASE_URL:
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            if "DATABASE_URL" in st.secrets:
+                DATABASE_URL = st.secrets["DATABASE_URL"]
+            elif "email" in st.secrets and "DATABASE_URL" in st.secrets["email"]:
+                DATABASE_URL = st.secrets["email"]["DATABASE_URL"]
+    except Exception:
+        pass
+
+if not DATABASE_URL:
+    secrets_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.streamlit', 'secrets.toml')
+    if os.path.exists(secrets_path):
+        try:
+            import tomllib
+            with open(secrets_path, "rb") as f:
+                secrets_data = tomllib.load(f)
+                if "DATABASE_URL" in secrets_data:
+                    DATABASE_URL = secrets_data["DATABASE_URL"]
+                elif "email" in secrets_data and "DATABASE_URL" in secrets_data["email"]:
+                    DATABASE_URL = secrets_data["email"]["DATABASE_URL"]
+        except Exception:
+            pass
+
+if not DATABASE_URL:
+    secrets_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.streamlit', 'secrets.toml')
+    if os.path.exists(secrets_path):
+        try:
+            with open(secrets_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("DATABASE_URL") and "=" in line:
+                        val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        if val:
+                            DATABASE_URL = val
+                            break
+        except Exception:
+            pass
+
+if not DATABASE_URL:
+    DATABASE_URL = f"sqlite:///{DB_PATH}"
+
+if DATABASE_URL and "pgbouncer=true" in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("?pgbouncer=true", "").replace("&pgbouncer=true", "")
 
 if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(
         DATABASE_URL, 
         connect_args={"check_same_thread": False, "timeout": 15}  # Needed for SQLite in multi-threaded Streamlit
     )
+    from sqlalchemy.engine import Engine
+    from sqlalchemy import event
+
+    @event.listens_for(Engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        try:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+        except Exception:
+            pass
 else:
     engine = create_engine(
-        DATABASE_URL
+        DATABASE_URL,
+        pool_pre_ping=True
     )
-
-# Enable SQLite foreign key support
-from sqlalchemy.engine import Engine
-from sqlalchemy import event
-
-@event.listens_for(Engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -60,66 +109,23 @@ def init_db():
     import models
     Base.metadata.create_all(bind=engine)
     
-    # Auto-migrations for SQLite to avoid dropping data
+    # Auto-migrations for DB columns
     from sqlalchemy import text
-    with engine.connect() as conn:
-        # 1. Add sla_hours to wf_node
+    migrations = [
+        "ALTER TABLE wf_node ADD COLUMN sla_hours INTEGER;",
+        "ALTER TABLE wf_node ADD COLUMN role_id INTEGER REFERENCES wf_role(id) ON DELETE SET NULL;",
+        "ALTER TABLE wf_instance ADD COLUMN docnum VARCHAR(50);",
+        "ALTER TABLE wf_instance ADD COLUMN internal_code VARCHAR(50);",
+        "ALTER TABLE wf_node ADD COLUMN template_file_name VARCHAR(255);",
+        "ALTER TABLE wf_node ADD COLUMN template_file_path VARCHAR(500);",
+        "ALTER TABLE wf_node ADD COLUMN erp_query_id INTEGER REFERENCES wf_erp_query(id) ON DELETE SET NULL;",
+        "ALTER TABLE wf_task ADD COLUMN docnum VARCHAR(50);",
+        "ALTER TABLE wf_instance ADD COLUMN brand_id INTEGER REFERENCES wf_brand(id) ON DELETE SET NULL;"
+    ]
+    for stmt in migrations:
         try:
-            conn.execute(text("ALTER TABLE wf_node ADD COLUMN sla_hours INTEGER;"))
-        except Exception:
-            pass
-            
-        # 1b. Add role_id to wf_node
-        try:
-            conn.execute(text("ALTER TABLE wf_node ADD COLUMN role_id INTEGER REFERENCES wf_role(id) ON DELETE SET NULL;"))
-        except Exception:
-            pass
-            
-        # 2. Add docnum to wf_instance
-        try:
-            conn.execute(text("ALTER TABLE wf_instance ADD COLUMN docnum VARCHAR(50);"))
-        except Exception:
-            pass
-            
-        # 3. Add internal_code to wf_instance
-        try:
-            conn.execute(text("ALTER TABLE wf_instance ADD COLUMN internal_code VARCHAR(50);"))
-        except Exception:
-            pass
-
-        # 4. Add template_file_name to wf_node
-        try:
-            conn.execute(text("ALTER TABLE wf_node ADD COLUMN template_file_name VARCHAR(255);"))
-        except Exception:
-            pass
-
-        # 5. Add template_file_path to wf_node
-        try:
-            conn.execute(text("ALTER TABLE wf_node ADD COLUMN template_file_path VARCHAR(500);"))
-        except Exception:
-            pass
-
-        # 6. Add erp_query_id to wf_node
-        try:
-            conn.execute(text("ALTER TABLE wf_node ADD COLUMN erp_query_id INTEGER REFERENCES wf_erp_query(id) ON DELETE SET NULL;"))
-        except Exception:
-            pass
-
-        # 7. Add docnum to wf_task
-        try:
-            conn.execute(text("ALTER TABLE wf_task ADD COLUMN docnum VARCHAR(50);"))
-        except Exception:
-            pass
-
-        # 8. Add brand_id to wf_instance
-        try:
-            conn.execute(text("ALTER TABLE wf_instance ADD COLUMN brand_id INTEGER REFERENCES wf_brand(id) ON DELETE SET NULL;"))
-        except Exception:
-            pass
-        
-        # In SQLAlchemy 2.x, commit connection context to persist ALTER TABLE
-        try:
-            conn.commit()
+            with engine.begin() as conn:
+                conn.execute(text(stmt))
         except Exception:
             pass
 

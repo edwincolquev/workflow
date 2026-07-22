@@ -232,13 +232,14 @@ with get_db() as db:
                     )
                     process_title = st.text_input(
                         "Título del Proceso *",
-                        placeholder="Ej. Importación Proveedor ABC - Junio 2025"
+                        placeholder="Ej. TAREA 21"
                     )
                 with col2:
+                    brand_options = [None] + [b.id for b in active_brands]
                     selected_brand_id = st.selectbox(
                         "Marca *",
-                        options=[b.id for b in active_brands],
-                        format_func=lambda x: next((f"{b.name} ({b.u_negocio})" for b in active_brands if b.id == x), str(x))
+                        options=brand_options,
+                        format_func=lambda x: next((f"{b.name} ({b.u_negocio})" for b in active_brands if b.id == x), "-- Seleccionar Marca --") if x is not None else "-- Seleccionar Marca --"
                     )
                     docnum_input = st.text_input(
                         "DocNum (Opcional)",
@@ -254,15 +255,19 @@ with get_db() as db:
                 submitted = st.form_submit_button("🚀 Crear Proceso", use_container_width=True, type="primary")
 
                 if submitted:
-                    if not process_title.strip():
+                    clean_title = process_title.strip().upper()
+                    if not clean_title:
                         st.error("El título del proceso es obligatorio.")
+                    elif selected_brand_id is None:
+                        st.error("❌ Debe seleccionar una Marca obligatoriamente.")
                     else:
-                        # Check process instance title uniqueness
+                        # Check process instance title uniqueness ONLY against ACTIVE instances
                         existing_inst = db.query(WorkflowInstance).filter(
-                            WorkflowInstance.title == process_title.strip()
+                            WorkflowInstance.title == clean_title,
+                            WorkflowInstance.status == 'ACTIVE'
                         ).first()
                         if existing_inst:
-                            st.error("❌ El título del proceso ya existe. Por favor, elige un nombre único y diferente.")
+                            st.error(f"❌ El título '{clean_title}' ya está en uso por otro proceso ACTIVO. Elige un nombre diferente o edita/cancela el proceso existente.")
                         else:
                             try:
                                 external_ref = None
@@ -272,12 +277,12 @@ with get_db() as db:
                                 new_instance = WorkflowEngine.create_instance(
                                     db=db,
                                     process_id=selected_proc_id,
-                                    title=process_title.strip(),
+                                    title=clean_title,
                                     creator_id=st.session_state.user['id'],
                                     external_ref=external_ref,
                                     brand_id=selected_brand_id
                                 )
-                                st.success(f"✅ Proceso **{new_instance.internal_code}** creado con éxito: *{process_title.strip()}*")
+                                st.success(f"✅ Proceso **{new_instance.internal_code}** creado con éxito: *{clean_title}*")
                                 st.session_state.selected_workflow_instance_id = new_instance.id
                                 st.rerun()
                             except Exception as e:
@@ -658,7 +663,74 @@ with get_db() as db:
             </div>
             """, unsafe_allow_html=True)
 
-            # ERP details are now rendered per active task instead of globally.
+            # ─── Edit Active Instance Expander ─────────────────────────
+            if instance.status == 'ACTIVE':
+                with st.expander("✏️ Editar Datos del Proceso (Título y Marca)"):
+                    with st.form(key=f"edit_instance_form_{instance.id}"):
+                        edit_title_input = st.text_input(
+                            "Nuevo Título del Proceso:",
+                            value=instance.title
+                        )
+                        active_brands_list = db.query(WorkflowBrand).filter(WorkflowBrand.active == True).all()
+                        current_brand_idx = 0
+                        brand_ids = [b.id for b in active_brands_list]
+                        if instance.brand_id and instance.brand_id in brand_ids:
+                            current_brand_idx = brand_ids.index(instance.brand_id)
+                            
+                        edit_brand_id = st.selectbox(
+                            "Marca / Categoría:",
+                            options=brand_ids,
+                            format_func=lambda x: next((f"{b.name} ({b.u_negocio})" for b in active_brands_list if b.id == x), str(x)),
+                            index=current_brand_idx
+                        )
+                        
+                        save_instance_changes = st.form_submit_button("💾 Guardar Cambios del Proceso", use_container_width=True)
+                        
+                        if save_instance_changes:
+                            new_clean_title = edit_title_input.strip().upper()
+                            if not new_clean_title:
+                                st.error("El título no puede estar vacío.")
+                            else:
+                                existing_other = db.query(WorkflowInstance).filter(
+                                    WorkflowInstance.title == new_clean_title,
+                                    WorkflowInstance.status == 'ACTIVE',
+                                    WorkflowInstance.id != instance.id
+                                ).first()
+                                
+                                if existing_other:
+                                    st.error(f"❌ El título '{new_clean_title}' ya está en uso por otro proceso activo.")
+                                else:
+                                    old_title = instance.title
+                                    old_brand = instance.brand.name if instance.brand else "Sin Marca"
+                                    new_brand_obj = next((b for b in active_brands_list if b.id == edit_brand_id), None)
+                                    new_brand_name = new_brand_obj.name if new_brand_obj else "Sin Marca"
+                                    
+                                    instance.title = new_clean_title
+                                    instance.brand_id = edit_brand_id
+                                    instance.updated_at = datetime.utcnow()
+                                    
+                                    changes_desc = []
+                                    if old_title != new_clean_title:
+                                        changes_desc.append(f"Título: '{old_title}' → '{new_clean_title}'")
+                                    if old_brand != new_brand_name:
+                                        changes_desc.append(f"Marca: '{old_brand}' → '{new_brand_name}'")
+                                        
+                                    if changes_desc:
+                                        db.add(WorkflowHistory(
+                                            instance_id=instance.id,
+                                            task_id=None,
+                                            source_node_id=None,
+                                            target_node_id=None,
+                                            user_id=st.session_state.user['id'],
+                                            action='UPDATE_METADATA',
+                                            comment=f"Modificación de proceso: {', '.join(changes_desc)}",
+                                            timestamp=datetime.utcnow()
+                                        ))
+                                        db.commit()
+                                        st.success("✅ Datos del proceso actualizados exitosamente.")
+                                        st.rerun()
+                                    else:
+                                        st.info("No se realizaron cambios en el título ni en la marca.")
 
             # ─── Email History Expander ────────────────────────────────────────────────
             with st.expander("✉️ Enviar Historial del Workflow por Correo"):

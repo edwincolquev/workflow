@@ -788,10 +788,10 @@ def send_workflow_completed_notification(db: Session, instance: WorkflowInstance
     email_attachments = []
     for att in from_attachments:
         try:
-            if os.path.exists(att.file_path):
-                with open(att.file_path, 'rb') as f:
-                    file_bytes = f.read()
-                ext = os.path.splitext(att.file_name)[1].lower()
+            from services.storage_service import StorageService
+            file_bytes = StorageService.get_file_bytes(att.file_path)
+            if file_bytes:
+                ext = os.path.splitext(att.file_name or "")[1].lower()
                 mime_map = {
                     '.pdf': 'application/pdf',
                     '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -917,10 +917,10 @@ def send_task_completion_email(db: Session, task: WorkflowTask, action_name: str
     email_attachments = []
     for att in attachments:
         try:
-            if os.path.exists(att.file_path):
-                with open(att.file_path, 'rb') as f:
-                    file_bytes = f.read()
-                ext = os.path.splitext(att.file_name)[1].lower()
+            from services.storage_service import StorageService
+            file_bytes = StorageService.get_file_bytes(att.file_path)
+            if file_bytes:
+                ext = os.path.splitext(att.file_name or "")[1].lower()
                 mime_map = {
                     '.pdf': 'application/pdf',
                     '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

@@ -185,9 +185,8 @@ with get_db() as db:
 
             st.markdown("---")
             st.markdown("### 🔍 Visualización del Flujo (Mermaid)")
-            mermaid_code = generate_mermaid(nodes, transitions)
-            if mermaid_code:
-                st.markdown(f"```mermaid\n{mermaid_code}\n```")
+            if nodes:
+                UIHelpers.render_interactive_mermaid(nodes, transitions, height=550)
             else:
                 st.info("Agregue nodos y transiciones para visualizar el diagrama.")
 
@@ -218,9 +217,8 @@ with get_db() as db:
             p_nodes = db.query(WorkflowNode).filter(WorkflowNode.process_id == selected_proc_p.id).all()
             p_transitions = db.query(WorkflowTransition).filter(WorkflowTransition.process_id == selected_proc_p.id).all()
             
-            mermaid_code = generate_mermaid(p_nodes, p_transitions)
-            if mermaid_code:
-                st.markdown(f"```mermaid\n{mermaid_code}\n```")
+            if p_nodes:
+                UIHelpers.render_interactive_mermaid(p_nodes, p_transitions, height=550)
             else:
                 st.info("Agregue nodos y transiciones para visualizar el diagrama.")
                 

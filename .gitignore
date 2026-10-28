@@ -1,0 +1,23 @@
+# Credenciales y configuración local
+.streamlit/secrets.toml
+.env
+.env.*
+!.env.example
+
+# Datos generados por la aplicación
+localdb/
+uploads/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Python y entornos locales
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Archivos locales de agentes
+.agents/

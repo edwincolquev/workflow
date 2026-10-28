@@ -3,9 +3,9 @@ import requests
 from datetime import datetime
 import streamlit as st
 
-# Default Supabase Storage configuration
-SUPABASE_URL = "https://vistjnuohkunrrgifolw.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpc3RqbnVvaGt1bnJyZ2lmb2x3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1NTkyMTcsImV4cCI6MjEwMDEzNTIxN30.nH1n6YfyE8ky3CRZiTqpNqMRl-oI-0OYSzj5CYKa7MI"
+# Supabase Storage configuration is loaded from Streamlit secrets.
+SUPABASE_URL = None
+SUPABASE_KEY = None
 BUCKET_NAME = "workflow-files"
 
 # Check secrets for overrides if present

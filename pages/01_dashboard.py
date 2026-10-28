@@ -130,7 +130,8 @@ with get_db() as db:
                     cycle_days = ref_lt + random.uniform(-10, 15)
                 
                 cycle_days = max(1.0, cycle_days)
-                created_days_ago = random.randint(int(cycle_days) + 2, 200)
+                min_days_ago = int(cycle_days) + 2
+                created_days_ago = random.randint(min_days_ago, max(200, min_days_ago + 30))
                 created_at = now - timedelta(days=created_days_ago)
                 completed_at = created_at + timedelta(days=cycle_days)
                 

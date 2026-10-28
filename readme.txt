@@ -19,7 +19,7 @@ git config --global user.name "Tu Nombre"
 
 git pull origin main   #Antes de empezar a trabajar en la Maquina 2, descarga lo que hiciste en la Maquina 1:
 
-base de datos supabase RGBKxgXknS2nmcUn
+Configurar las credenciales de la base de datos en .streamlit/secrets.toml (archivo local, no subir a GitHub).
 
 
 #SUBIR CAMBIOS A REPOSITORIO

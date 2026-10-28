@@ -66,6 +66,11 @@ def _extract_db_url():
 
 DATABASE_URL = _extract_db_url() or f"sqlite:///{DB_PATH}"
 
+# SQLAlchemy 2.1 defaults postgresql:// URLs to psycopg (v3), while this
+# project installs psycopg2-binary. Select the installed driver explicitly.
+if DATABASE_URL.startswith(("postgresql://", "postgresql+psycopg://")):
+    DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL.split("://", 1)[1]
+
 if DATABASE_URL and "pgbouncer=true" in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("?pgbouncer=true", "").replace("&pgbouncer=true", "")
 

@@ -14,36 +14,31 @@ ROLE_ACCESS = {
         'dashboard': True,
         'bandeja': True,
         'detalle_workflow': True,
-        'admin': True,
-        'catalogo': True
+        'admin': True
     },
     'Gerencia': {
         'dashboard': True,
         'bandeja': True,
         'detalle_workflow': True,
-        'admin': False,
-        'catalogo': False
+        'admin': False
     },
     'Compras': {
         'dashboard': True,
         'bandeja': True,
         'detalle_workflow': True,
-        'admin': False,
-        'catalogo': True
+        'admin': False
     },
     'Importaciones': {
         'dashboard': True,
         'bandeja': True,
         'detalle_workflow': True,
-        'admin': False,
-        'catalogo': False
+        'admin': False
     },
     'Logística': {
         'dashboard': True,
         'bandeja': True,
         'detalle_workflow': True,
-        'admin': False,
-        'catalogo': False
+        'admin': False
     }
 }
 
@@ -52,5 +47,7 @@ def has_access(user, section):
     """Use all roles assigned to a Workflow user for page authorization."""
     if not user:
         return False
+    if section == 'catalogo':
+        return True
     roles = user.get('roles') or ([user['role']] if user.get('role') else [])
     return any(ROLE_ACCESS.get(role, {}).get(section, False) for role in roles)

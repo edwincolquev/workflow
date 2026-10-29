@@ -15,7 +15,7 @@ from catalogo.plantilla_hoja import (
 def raises(message):
     try:
         yield
-    except ValueError as error:
+    except Exception as error:
         assert re.search(message, str(error)), str(error)
     else:
         raise AssertionError("La operación debió rechazar la plantilla")
@@ -83,7 +83,7 @@ def test_excel_invalid_row_rolls_back_previous_updates(tmp_path):
     path = _catalogo(tmp_path)
     def edit(sheet):
         sheet["D2"] = "No guardar"
-        sheet["I3"] = "Pedido"
+        sheet["I3"] = "En SAP"  # Sigue requiriendo Código SAP.
     content = _edit(plantilla_hoja_bytes(path), edit)
     with raises("Fila 3"):
         importar_plantilla_hoja(content, path)
@@ -98,3 +98,21 @@ def test_excel_rejects_changed_header_and_duplicate_code(tmp_path):
         revisar_plantilla_hoja(_edit(original, lambda sheet: setattr(sheet["B1"], "value", "Proveedor")))
     with raises("repetido"):
         revisar_plantilla_hoja(_edit(original, lambda sheet: sheet.append([None, "001", None, "Duplicado"])))
+
+
+def test_excel_export_respects_brand_and_state_filters(tmp_path):
+    path = _catalogo(tmp_path)
+    with get_connection(path) as connection:
+        guardar_repuesto(connection, {"codigo_proveedor": "003", "nombre_marca": "MARCA A"})
+        brand_id = connection.execute("SELECT id FROM marcas_repuestos WHERE nombre = 'MARCA A'").fetchone()[0]
+        third_id = connection.execute("SELECT id FROM repuestos WHERE codigo_proveedor = '003'").fetchone()[0]
+        guardar_repuesto(connection, {"estado_gestion": "En cotización"}, third_id)
+
+    def codes(content):
+        sheet = load_workbook(BytesIO(content))["Repuestos"]
+        return [row[1] for row in sheet.iter_rows(min_row=2, max_col=2, values_only=True) if row[1]]
+
+    assert codes(plantilla_hoja_bytes(path, marca_id=brand_id)) == ["003"]
+    assert codes(plantilla_hoja_bytes(path, estado="en_cotizacion")) == ["003"]
+    assert codes(plantilla_hoja_bytes(path, marca_id=brand_id, estado="propuesto")) == []
+    assert codes(plantilla_hoja_bytes(path, marca_id=-1, estado="propuesto")) == ["001", "002"]

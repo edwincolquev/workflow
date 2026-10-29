@@ -49,10 +49,20 @@ def _export_value(field, value):
     return value
 
 
-def plantilla_hoja_bytes(db_path: str | Path = DEFAULT_DB_PATH) -> bytes:
-    """Exporta todo el catálogo; cada repuesto ocupa una fila."""
+def plantilla_hoja_bytes(db_path: str | Path = DEFAULT_DB_PATH, *, marca_id=None, estado=None) -> bytes:
+    """Exporta los repuestos de la marca y el estado seleccionados."""
+    conditions, params = [], []
+    if marca_id == -1:
+        conditions.append("marca_id IS NULL")
+    elif marca_id is not None:
+        conditions.append("marca_id = ?")
+        params.append(marca_id)
+    if estado is not None:
+        conditions.append("estado_gestion = ?")
+        params.append(normalizar_estado(estado))
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
     with get_connection(db_path) as connection:
-        rows = connection.execute("SELECT * FROM vista_repuestos ORDER BY id").fetchall()
+        rows = connection.execute("SELECT * FROM vista_repuestos" + where + " ORDER BY id", params).fetchall()
     book = Workbook()
     sheet = book.active
     sheet.title = DATA_SHEET

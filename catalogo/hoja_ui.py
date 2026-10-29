@@ -74,13 +74,19 @@ def mostrar_hoja(rows, scope, total):
     st.subheader("Hoja de trabajo")
     st.caption(f"{len(state['borrador'])} de {total} repuestos mostrados con estos filtros.")
     with st.expander("Edición masiva con Excel"):
-        st.write("Descargue todos los repuestos, edite las celdas y agregue filas al final con el ID vacío. "
+        st.write("La descarga respeta Filtrar por MARCA y Filtrar por estado; incluye todos los repuestos coincidentes, "
+                 "aunque la hoja muestre menos filas. Edite las celdas y agregue filas al final con el ID vacío. "
                  "Mantenga los encabezados y los códigos como texto para conservar ceros iniciales. "
                  "Las filas omitidas no se eliminan; las filas sin cambios no se guardan.")
+        export_scope = scope[:2]
         if st.button("Preparar plantilla Excel", key="hoja_preparar_excel"):
-            st.session_state["hoja_plantilla_excel"] = plantilla_hoja_bytes()
-        if st.session_state.get("hoja_plantilla_excel"):
-            st.download_button("Descargar plantilla Excel", data=st.session_state["hoja_plantilla_excel"],
+            st.session_state["hoja_plantilla_excel"] = {
+                "filtros": export_scope,
+                "datos": plantilla_hoja_bytes(marca_id=export_scope[0], estado=export_scope[1]),
+            }
+        prepared = st.session_state.get("hoja_plantilla_excel")
+        if prepared and prepared["filtros"] == export_scope:
+            st.download_button("Descargar plantilla Excel", data=prepared["datos"],
                                file_name="repuestos_hoja_trabajo.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                key="hoja_descargar_excel")

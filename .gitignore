@@ -7,6 +7,7 @@
 # Datos generados por la aplicación
 localdb/
 uploads/
+catalogo/data/
 *.db
 *.sqlite
 *.sqlite3

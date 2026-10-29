@@ -4,6 +4,17 @@ import hashlib
 from database import get_db, init_db
 from models import WorkflowUser, WorkflowTask, WorkflowNode, WorkflowTransition, WorkflowHistory
 from components.ui_helpers import UIHelpers
+from config.settings import has_access
+
+ROLE_PRIORITY = ("Administrador", "Gerencia", "Compras", "Importaciones", "Logística")
+
+
+def _session_user_info(user):
+    roles = [role.name for role in user.roles]
+    primary = next((role for role in ROLE_PRIORITY if role in roles),
+                   roles[0] if roles else "Sin Rol")
+    return {"id": user.id, "username": user.username, "full_name": user.full_name,
+            "role": primary, "roles": roles}
 
 # Initialize database tables automatically (cached to run once per process)
 @st.cache_resource
@@ -39,14 +50,22 @@ def check_login(username, password):
             WorkflowUser.active == True
         ).first()
         if user and user.password_hash == hash_password(password):
-            role_name = user.roles[0].name if user.roles else "Sin Rol"
-            return {
-                "id": user.id,
-                "username": user.username,
-                "full_name": user.full_name,
-                "role": role_name
-            }
+            return _session_user_info(user)
     return None
+
+
+# Refresh roles and active status on each rerun so admin changes take effect.
+if st.session_state.authenticated:
+    with get_db() as db:
+        current_user = db.query(WorkflowUser).filter(
+            WorkflowUser.id == st.session_state.user["id"],
+            WorkflowUser.active == True,
+        ).first()
+        if current_user:
+            st.session_state.user = _session_user_info(current_user)
+        else:
+            st.session_state.authenticated = False
+            st.session_state.user = None
 
 # Intercept token requests from email links
 if "token" in st.query_params:
@@ -489,20 +508,6 @@ if not st.session_state.authenticated:
                 else:
                     st.error("Credenciales incorrectas o usuario inactivo.")
                     
-        # Help details (using demo credentials)
-        st.markdown("""
-        <div style="background-color: rgba(255,255,255,0.5); padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px;">
-            <p style="font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.85rem;">Usuarios demo iniciales (Contraseñas: usuario123, ej: admin123):</p>
-            <ul style="color: #64748b; font-size: 0.8rem; padding-left: 20px; margin: 0;">
-                <li><b>admin</b> (Rol: Administrador)</li>
-                <li><b>gerente</b> (Rol: Gerencia)</li>
-                <li><b>comprador</b> (Rol: Compras)</li>
-                <li><b>importador</b> (Rol: Importaciones)</li>
-                <li><b>logistico</b> (Rol: Logística)</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-
 # 4. Navigation & Pages routing
 else:
     # Sidebar Info
@@ -520,10 +525,24 @@ else:
         st.rerun()
 
     # Define pages
-    dashboard_page = st.Page("pages/01_dashboard.py", title="Dashboard", icon="📊", default=True)
-    bandeja_page = st.Page("pages/02_bandeja.py", title="Bandeja", icon="📥")
-    admin_page = st.Page("pages/04_admin.py", title="Admin", icon="⚙️")
-    
-    pg = st.navigation([dashboard_page, bandeja_page, admin_page])
+    workflow_pages = []
+    if has_access(st.session_state.user, "dashboard"):
+        workflow_pages.append(st.Page("pages/01_dashboard.py", title="Dashboard", icon="📊", default=True))
+    if has_access(st.session_state.user, "bandeja"):
+        workflow_pages.append(st.Page("pages/02_bandeja.py", title="Bandeja", icon="📥"))
+    if has_access(st.session_state.user, "admin"):
+        workflow_pages.append(st.Page("pages/04_admin.py", title="Admin", icon="⚙️"))
+
+    sections = {}
+    if workflow_pages:
+        sections["Workflow"] = workflow_pages
+    if has_access(st.session_state.user, "catalogo"):
+        sections["Catálogo"] = [st.Page("catalogo/app.py", title="Repuestos", icon="📦")]
+
+    if not sections:
+        st.error("Su cuenta no tiene secciones asignadas. Contacte al administrador.")
+        st.stop()
+
+    pg = st.navigation(sections)
     pg.run()
 

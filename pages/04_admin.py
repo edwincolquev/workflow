@@ -12,7 +12,7 @@ from models import (
     WorkflowEmailLog, WorkflowErpQuery, WorkflowInstanceQueryDocNum, WorkflowBrand
 )
 from components.ui_helpers import UIHelpers
-from config.settings import ROLE_ACCESS
+from config.settings import has_access
 from services.workflow_validator import WorkflowValidatorService
 
 # 1. Access Control
@@ -21,7 +21,7 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 user_role = st.session_state.user['role']
-if not ROLE_ACCESS.get(user_role, {}).get('admin', False):
+if not has_access(st.session_state.user, 'admin'):
     st.error("Acceso denegado: Tu rol no tiene permisos para ver esta sección.")
     st.stop()
 

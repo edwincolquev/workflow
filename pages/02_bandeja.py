@@ -14,7 +14,7 @@ from models import (
 from components.ui_helpers import UIHelpers
 from components.comments import CommentsComponent
 from components.attachments import AttachmentsComponent
-from config.settings import ROLE_ACCESS
+from config.settings import has_access
 from engine import WorkflowEngine
 
 # 1. Access Control
@@ -23,7 +23,7 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 user_role = st.session_state.user['role']
-if not ROLE_ACCESS.get(user_role, {}).get('bandeja', False):
+if not has_access(st.session_state.user, 'bandeja'):
     st.error("Acceso denegado: Tu rol no tiene permisos para ver esta sección.")
     st.stop()
 

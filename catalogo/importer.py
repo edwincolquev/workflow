@@ -15,19 +15,22 @@ import pandas as pd
 from catalogo.database import DEFAULT_DB_PATH, get_connection
 from catalogo.descriptions import refresh_long_description
 from catalogo.schema_names import IMPORT_KEY_RENAMES, normalize_import_data
-from catalogo.gestion import guardar_repuesto, validar_gestion
+from catalogo.gestion import guardar_repuesto
 
 
 MAESTRO_COLUMNS = [
         "repuestos.codigo_proveedor", "repuestos.codigo_sap", "repuestos.descripcion", "repuestos.medida",
         "unidades_medida.nombre", "marcas_repuestos.nombre", "categorias_repuestos.nombre",
-        "repuestos.estado_gestion", "repuestos.minimo_compra", "repuestos.precio_compra",
-        "repuestos.precio_venta", "repuestos.cantidad_compra", "codigos_oem.codigo_oem",
+        "codigos_oem.codigo_oem",
         "referencias_cruzadas.tipo_referencia", "referencias_cruzadas.codigo_referencia",
         "marcas_vehiculos.nombre", "modelos_vehiculos.nombre", "tipos_motor.codigo", "tipos_motor.descripcion",
         "aplicaciones_repuestos.cilindrada", "aplicaciones_repuestos.anio_desde",
         "aplicaciones_repuestos.anio_hasta", "aplicaciones_repuestos.texto_aplicacion",
 ]
+MAESTRO_CAMPOS_CLASIFICACION = ("unidad", "nombre_marca", "categoria")
+MAESTRO_CAMPOS_EXCLUIDOS = frozenset((
+    "estado_gestion", "minimo_compra", "precio_compra", "precio_venta", "cantidad_compra",
+))
 
 
 def plantilla_maestro_bytes(*, incluir_datos=False, marca_id=None, estado=None,
@@ -79,8 +82,7 @@ def plantilla_maestro_bytes(*, incluir_datos=False, marca_id=None, estado=None,
                 oems, references, applications = relations
                 base_fields = (
                     "codigo_proveedor", "codigo_sap", "descripcion", "medida", "unidad",
-                    "nombre_marca", "categoria", "estado_gestion", "minimo_compra",
-                    "precio_compra", "precio_venta", "cantidad_compra",
+                    "nombre_marca", "categoria",
                 )
                 application_fields = (
                     "marca_vehiculo", "modelo_vehiculo", "codigo_motor", "descripcion_motor",
@@ -192,6 +194,11 @@ def read_source(path: str | Path, nombre_hoja: str | int = 0) -> pd.DataFrame:
         dataframe = pd.read_excel(source, header=1 if master else 0, **options)
     else:
         raise ValueError("Formato no soportado. Use CSV o Excel.")
+    ignored_aliases = set().union(*(COLUMN_ALIASES[field] for field in MAESTRO_CAMPOS_EXCLUIDOS))
+    ignored_columns = [column for column in dataframe.columns
+                       if normalize_column(column) in ignored_aliases]
+    if ignored_columns:
+        dataframe = dataframe.drop(columns=ignored_columns)
     dataframe.attrs["first_data_row"] = 3 if master else 2
     dataframe.attrs["master_format"] = master
     return dataframe
@@ -245,7 +252,8 @@ def _application_warnings(data: dict[str, Any]) -> list[str]:
 
 def stage_dataframe(dataframe: pd.DataFrame, nombre_archivo: str, nombre_hoja: str | None = None,
                     db_path: str | Path = DEFAULT_DB_PATH) -> int:
-    mapping = map_columns(list(dataframe.columns))
+    mapping = {target: source for target, source in map_columns(list(dataframe.columns)).items()
+               if target not in MAESTRO_CAMPOS_EXCLUIDOS}
     if "codigo_proveedor" not in mapping and "codigo_sap" not in mapping:
         raise ValueError("Falta una columna de código de proveedor o código SAP")
     master = bool(dataframe.attrs.get("master_format"))
@@ -278,7 +286,7 @@ def stage_dataframe(dataframe: pd.DataFrame, nombre_archivo: str, nombre_hoja: s
             if data.get("modelo_vehiculo"):
                 last_model = data["modelo_vehiculo"]
             data["modelo_vehiculo"] = last_model
-        errores = validar_gestion(data)
+        errores = []
         if not data.get("codigo_proveedor") and not data.get("codigo_sap"):
             errores.append("Falta código de proveedor o SAP")
         if data.get("codigo_referencia") and not data.get("tipo_referencia"):
@@ -417,7 +425,9 @@ def confirm_batch(lote_id: int, db_path: str | Path = DEFAULT_DB_PATH) -> tuple[
             (lote_id,),
         ).fetchall()
         for row in rows:
-            data = normalize_import_data(json.loads(row["datos_normalizados"]))
+            data = {key: value for key, value in normalize_import_data(
+                json.loads(row["datos_normalizados"])
+            ).items() if key not in MAESTRO_CAMPOS_EXCLUIDOS}
             part = _find_part(connection, data)
             try:
                 repuesto_id, changed = guardar_repuesto(

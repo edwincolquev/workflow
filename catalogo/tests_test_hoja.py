@@ -110,7 +110,8 @@ def test_sheet_detects_stale_rows_and_rejects_unshown_ids(tmp_path):
 def test_sheet_keeps_sap_closed_and_rejects_wrong_category(tmp_path):
     path, rows = _datos(tmp_path)
     with get_connection(path) as connection:
-        sap_id, _ = guardar_repuesto(connection, dict(codigo_proveedor="SAP", codigo_sap="SAP-1", precio_compra=5))
+        sap_id, _ = guardar_repuesto(connection, dict(codigo_proveedor="SAP", codigo_sap="SAP-1",
+                                                estado_gestion="En SAP", precio_compra=5))
         sap_row = dict(connection.execute("SELECT * FROM vista_repuestos WHERE id = ?", (sap_id,)).fetchone())
         other_brand = connection.execute("INSERT INTO marcas_repuestos (nombre) VALUES ('OTRA')").lastrowid
         connection.execute("INSERT INTO categorias_repuestos (marca_id, nombre) VALUES (?, 'EXCLUSIVA')", (other_brand,))

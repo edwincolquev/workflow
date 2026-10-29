@@ -63,9 +63,13 @@ def test_filtered_master_export_includes_related_data_and_can_be_reimported(tmp_
     ).decode("utf-8-sig")), delimiter=";"))
     assert len(filtered) == 4
     assert [row[0] for row in filtered[2:]] == ["P-1", "P-1"]
-    assert [row[12] for row in filtered[2:]] == ["OEM-1", "OEM-2"]
-    assert [row[16] for row in filtered[2:]] == ["HILUX", "COROLLA"]
-    assert [row[13:15] for row in filtered[2:]] == [["CRUCE", "REF-1"], ["", ""]]
+    assert all(column not in filtered[1] for column in (
+        "repuestos.estado_gestion", "repuestos.minimo_compra", "repuestos.precio_compra",
+        "repuestos.precio_venta", "repuestos.cantidad_compra",
+    ))
+    assert [row[7] for row in filtered[2:]] == ["OEM-1", "OEM-2"]
+    assert [row[11] for row in filtered[2:]] == ["HILUX", "COROLLA"]
+    assert [row[8:10] for row in filtered[2:]] == [["CRUCE", "REF-1"], ["", ""]]
 
     no_brand = list(csv.reader(io.StringIO(plantilla_maestro_bytes(
         incluir_datos=True, marca_id=-1, estado="en_sap", db_path=path
@@ -88,6 +92,19 @@ def test_import_reads_semicolon_csv(tmp_path):
     dataframe = read_source(source_path)
     assert list(dataframe.columns) == ["Codigo SAP", "Descripcion", "OEM"]
     assert dataframe.iloc[0]["Codigo SAP"] == "SAP-003"
+
+
+def test_master_reader_omits_old_commercial_columns(tmp_path):
+    source_path = tmp_path / "maestro_antiguo.csv"
+    source_path.write_text(
+        "REPUESTOS;REPUESTOS;REPUESTOS;REPUESTOS;REPUESTOS\n"
+        "repuestos.codigo_proveedor;repuestos.estado_gestion;repuestos.precio_compra;"
+        "repuestos.cantidad_compra;repuestos.descripcion\n"
+        "P-1;En SAP;-2;nan;Filtro\n", encoding="utf-8",
+    )
+    dataframe = read_source(source_path)
+    assert list(dataframe.columns) == ["repuestos.codigo_proveedor", "repuestos.descripcion"]
+    assert dataframe.attrs["first_data_row"] == 3
 
 
 def test_master_is_idempotent_and_updates_only_informed_fields(tmp_path):

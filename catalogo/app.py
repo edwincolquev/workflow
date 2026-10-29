@@ -8,9 +8,10 @@ import streamlit as st
 
 from catalogo.database import execute, fetch_all, get_connection, initialize_database, using_postgres
 from catalogo.descriptions import generate_application_summary, generate_long_description, refresh_long_description
-from catalogo.importer import confirm_batch, plantilla_maestro_bytes, read_source, save_application, stage_dataframe
+from catalogo.importer import (MAESTRO_CAMPOS_CLASIFICACION, MAESTRO_CAMPOS_EXCLUIDOS,
+                               confirm_batch, plantilla_maestro_bytes, read_source, save_application, stage_dataframe)
 from catalogo.schema_names import normalize_import_data
-from catalogo.gestion import CAMPOS_GESTION, ESTADOS, guardar_repuesto
+from catalogo.gestion import ESTADOS, guardar_repuesto
 from catalogo.gestion_ui import administrar_clasificacion, campos_clasificacion, campos_comerciales, mostrar_gestion
 from catalogo.hoja_ui import hay_cambios_hoja, mostrar_hoja
 from config.settings import has_access
@@ -336,16 +337,16 @@ with import_tab:
     )
     download_cols = st.columns(2)
     download_cols[0].download_button(
-        "Descargar plantilla con clasificación y gestión",
+        "Descargar maestro de repuestos",
         data=plantilla_maestro_bytes(incluir_datos=True, marca_id=export_brand, estado=export_state),
         file_name="plantilla_maestro_filtrada.csv", mime="text/csv",
     )
     download_cols[1].download_button(
         "Descargar plantilla vacía", data=plantilla_maestro_bytes(),
-        file_name="plantilla_maestro_gestion.csv", mime="text/csv",
+        file_name="plantilla_maestro_repuestos.csv", mime="text/csv",
     )
-    st.caption("La plantilla con datos incluye únicamente los repuestos que coinciden con ambos filtros.")
-    st.caption("Los precios de compra y venta de la plantilla están expresados en USD.")
+    st.caption("Los filtros solo eligen qué repuestos descargar; estado, mínimo, precios y cantidad se trabajan en Hoja de trabajo.")
+    st.caption("Si un archivo antiguo contiene columnas comerciales, se omitirán durante la carga.")
     st.caption("Un código de proveedor repetido añade datos al mismo repuesto. Los campos informados del repuesto se actualizan; los OEM y las referencias nuevos se añaden sin duplicados.")
     source_file = st.file_uploader("Archivo maestro", type=["csv", "xlsx", "xls"], disabled=READ_ONLY)
     if source_file:
@@ -376,7 +377,9 @@ with import_tab:
         review = []
         existing_by_supplier = {}
         for row in staged:
-            data = normalize_import_data(json.loads(row["datos_normalizados"]))
+            data = {key: value for key, value in normalize_import_data(
+                json.loads(row["datos_normalizados"])
+            ).items() if key not in MAESTRO_CAMPOS_EXCLUIDOS}
             supplier = data.get("codigo_proveedor")
             supplier_key = supplier.strip().upper() if supplier else ""
             if supplier_key and supplier_key not in existing_by_supplier:
@@ -395,7 +398,7 @@ with import_tab:
                         (repuesto_id,),
                     )
                     existing_by_supplier[supplier_key] = (
-                        {key: current[0][key] for key in ("codigo_proveedor", "codigo_sap", "descripcion", "medida", *CAMPOS_GESTION)},
+                        {key: current[0][key] for key in ("codigo_proveedor", "codigo_sap", "descripcion", "medida", *MAESTRO_CAMPOS_CLASIFICACION)},
                         ", ".join(item["codigo_oem"] for item in oem_codes),
                         ", ".join(f"{item['tipo_referencia']}: {item['codigo_referencia']}" for item in references),
                     )
@@ -412,7 +415,7 @@ with import_tab:
                                referencias_existentes=existing_references,
                                marca=data.get("marca_vehiculo"), modelo=data.get("modelo_vehiculo"),
                                motor=data.get("codigo_motor"), aplicacion=data.get("texto_aplicacion"),
-                               **{field + "_nuevo": data.get(field) for field in CAMPOS_GESTION}))
+                               **{field + "_nuevo": data.get(field) for field in MAESTRO_CAMPOS_CLASIFICACION}))
         st.dataframe(review, width="stretch", hide_index=True)
         if batch["estado"] == "staged" and st.button("Confirmar filas válidas", type="primary", disabled=READ_ONLY):
             try:

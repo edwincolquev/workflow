@@ -15,7 +15,6 @@ ESTADOS = {
     "en_sap": "En SAP",
 }
 NUMERICOS = ("minimo_compra", "precio_compra", "precio_venta", "cantidad_compra")
-CAMPOS_GESTION = ("unidad", "nombre_marca", "categoria", "estado_gestion", *NUMERICOS)
 
 
 def normalizar_estado(value):
@@ -114,9 +113,8 @@ def guardar_repuesto(connection: sqlite3.Connection, data: dict, repuesto_id=Non
             raise ValueError("Seleccione una marca comercial antes de asignar una categoría")
         values["categoria_id"] = _catalogo_id(connection, "categorias_repuestos", data["categoria"], marca_id) if data["categoria"] else None
 
-    codigo_sap = values.get("codigo_sap", current["codigo_sap"] if current else None)
     state = normalizar_estado(data["estado_gestion"]) if data.get("estado_gestion") else (
-        current["estado_gestion"] if current else ("en_sap" if codigo_sap else "propuesto")
+        current["estado_gestion"] if current else "propuesto"
     )
     if current:
         if not permitir_comercial_excel and current["estado_gestion"] == "en_sap" and any(

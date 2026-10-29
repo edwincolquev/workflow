@@ -14,7 +14,7 @@ Aplicación Streamlit para administrar repuestos, importar maestros y generar de
 
 El esquema se consulta en [DIAGRAMA_ER.md](DIAGRAMA_ER.md) y la correspondencia de nombres anteriores y actuales en [DICCIONARIO_DATOS.md](DICCIONARIO_DATOS.md). Por ejemplo, `parts.supplier_code` pasó a `repuestos.codigo_proveedor` y `part_oem_codes.oem_code` a `codigos_oem.codigo_oem`.
 
-Las etapas, campos de compra y venta y encabezados del maestro se describen en [GESTION_COMERCIAL.md](GESTION_COMERCIAL.md). En Streamlit, la pestaña Clasificación administra las listas y la pestaña Importar permite descargar la plantilla ampliada.
+Las etapas, campos de compra y venta y encabezados del maestro se describen en [GESTION_COMERCIAL.md](GESTION_COMERCIAL.md). En Streamlit, la pestaña Clasificación administra las listas y la pestaña Importar permite descargar el maestro técnico. Estado, mínimo, precios y cantidad de compra se gestionan desde Hoja de trabajo; los archivos maestro anteriores que contienen esos campos se pueden cargar, pero no modifican los valores comerciales.
 
 ## Supabase/PostgreSQL
 

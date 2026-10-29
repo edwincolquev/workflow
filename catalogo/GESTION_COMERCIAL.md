@@ -14,7 +14,7 @@ En la pantalla, los importes y cantidades comerciales de un artículo En SAP per
 
 ## Campos para el maestro
 
-En la pestaña Importar se puede descargar una plantilla de dos encabezados con los campos nuevos y los datos técnicos anteriores. Los archivos anteriores siguen siendo compatibles.
+En la pestaña Importar se descarga un maestro de datos técnicos, OEM, referencias, aplicaciones y clasificación. El estado, mínimo de compra, precios y cantidad de compra se trabajan en Hoja de trabajo. Los archivos maestro anteriores siguen siendo compatibles, pero esas cinco columnas se ignoran aunque aparezcan en el archivo. Los repuestos nuevos importados empiezan en Propuesto.
 
 | Encabezado | Uso |
 | --- | --- |
@@ -22,15 +22,10 @@ En la pestaña Importar se puede descargar una plantilla de dos encabezados con 
 | `unidades_medida.nombre` | Pieza, Juego, Metro u otra unidad administrada por el usuario. |
 | `marcas_repuestos.nombre` | Marca comercial del repuesto. También se acepta `repuestos.nombre_marca` y los alias anteriores. |
 | `categorias_repuestos.nombre` | Categoría dentro de la marca comercial. Requiere una marca nueva o ya asignada al repuesto. |
-| `repuestos.estado_gestion` | Propuesto, En cotización, Pendiente de aprobación, Aprobado, Pedido, En SAP o Rechazado. |
-| `repuestos.minimo_compra` | Cantidad mínima, mayor que cero cuando se informa. |
-| `repuestos.precio_compra` | Precio unitario en USD, mayor o igual a cero. |
-| `repuestos.precio_venta` | Precio unitario en USD, mayor o igual a cero. |
-| `repuestos.cantidad_compra` | Cantidad prevista, mayor o igual a cero. |
 
 En el CSV se aceptan punto o coma decimal, sin separadores de miles. Las celdas vacías conservan el valor existente; cero es un valor informado. Las listas de unidades, marcas y categorías se reutilizan por nombre, ignorando mayúsculas y espacios externos. Las categorías se reutilizan dentro de su marca. Al cambiar la marca del repuesto, se retira la categoría anterior para que pueda elegirse una de la nueva marca.
 
-Los errores numéricos o estados desconocidos aparecen durante la preparación. Si alguna fila falla al confirmar, se revierte toda la confirmación del lote.
+Los errores de datos técnicos aparecen durante la preparación. Si alguna fila falla al confirmar, se revierte toda la confirmación del lote.
 
 ## Uso en Streamlit
 

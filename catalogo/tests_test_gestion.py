@@ -1,4 +1,5 @@
 from contextlib import closing
+import json
 import sqlite3
 
 import pandas as pd
@@ -27,7 +28,7 @@ def test_management_migration_preserves_brand_and_initializes_states(tmp_path):
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-def test_management_import_is_sparse_and_idempotent(tmp_path):
+def test_master_import_ignores_commercial_fields_and_keeps_classification(tmp_path):
     path = tmp_path / "catalogo.sqlite3"
     initialize_database(path)
     data = pd.DataFrame([{
@@ -38,20 +39,27 @@ def test_management_import_is_sparse_and_idempotent(tmp_path):
     }])
     assert confirm_batch(stage_dataframe(data, "gestion.csv", db_path=path), db_path=path) == (1, 0)
     assert confirm_batch(stage_dataframe(data, "gestion.csv", db_path=path), db_path=path) == (0, 0)
+    with get_connection(path) as connection:
+        part_id = connection.execute("SELECT id FROM repuestos WHERE codigo_proveedor = 'N-001'").fetchone()[0]
+        guardar_repuesto(connection, {"precio_compra": 5, "estado_gestion": "Aprobado"}, part_id)
     update = pd.DataFrame([{"codigo_proveedor": "N-001", "precio_compra": "0", "precio_venta": ""}])
-    assert confirm_batch(stage_dataframe(update, "actualizar.csv", db_path=path), db_path=path) == (0, 1)
+    assert confirm_batch(stage_dataframe(update, "actualizar.csv", db_path=path), db_path=path) == (0, 0)
     with get_connection(path) as connection:
         row = connection.execute("SELECT * FROM vista_repuestos").fetchone()
         assert (row["unidad"], row["nombre_marca"], row["categoria"]) == ("Metro", "FRASLE", "Frenos")
-        assert (row["minimo_compra"], row["precio_compra"], row["precio_venta"], row["cantidad_compra"]) == (10.5, 0, 3.75, 12.5)
-        assert row["estado_gestion"] == "propuesto"
+        assert (row["minimo_compra"], row["precio_compra"], row["precio_venta"], row["cantidad_compra"]) == (None, 5, None, None)
+        assert row["estado_gestion"] == "aprobado"
         assert connection.execute("SELECT count(*) FROM categorias_repuestos").fetchone()[0] == 1
-        assert connection.execute("SELECT count(*) FROM historial_estados").fetchone()[0] == 1
-    invalid = pd.DataFrame([{"codigo_proveedor": "INVALIDO", "precio_compra": "-2", "cantidad_compra": "nan"}])
-    batch = stage_dataframe(invalid, "invalido.csv", db_path=path)
+        assert connection.execute("SELECT count(*) FROM historial_estados").fetchone()[0] == 2
+    old_file = pd.DataFrame([{"codigo_proveedor": "N-002", "estado_gestion": "En SAP",
+                              "precio_compra": "-2", "cantidad_compra": "nan"}])
+    batch = stage_dataframe(old_file, "antiguo.csv", db_path=path)
     with get_connection(path) as connection:
-        assert connection.execute("SELECT filas_error FROM lotes_importacion WHERE id = ?", (batch,)).fetchone()[0] == 1
-    assert confirm_batch(batch, db_path=path) == (0, 0)
+        assert connection.execute("SELECT filas_error FROM lotes_importacion WHERE id = ?", (batch,)).fetchone()[0] == 0
+    assert confirm_batch(batch, db_path=path) == (1, 0)
+    with get_connection(path) as connection:
+        row = connection.execute("SELECT estado_gestion, precio_compra FROM repuestos WHERE codigo_proveedor = 'N-002'").fetchone()
+        assert tuple(row) == ("propuesto", None)
 
 
 def test_category_must_belong_to_brand(tmp_path):
@@ -102,20 +110,27 @@ def test_free_states_record_history_and_screen_closes_commercial_at_sap(tmp_path
         raise AssertionError("Se modificó la gestión comercial cerrada")
 
 
-def test_master_import_accepts_arbitrary_states(tmp_path):
+def test_master_import_preserves_managed_states(tmp_path):
     path = tmp_path / "catalogo.sqlite3"
     initialize_database(path)
     with get_connection(path) as connection:
-        guardar_repuesto(connection, dict(codigo_proveedor="A"))
-        guardar_repuesto(connection, dict(codigo_proveedor="B"))
+        guardar_repuesto(connection, dict(codigo_proveedor="A", estado_gestion="Aprobado"))
+        guardar_repuesto(connection, dict(codigo_proveedor="B", estado_gestion="En SAP"))
     data = pd.DataFrame([{"codigo_proveedor": "A", "estado_gestion": "En cotización"},
                          {"codigo_proveedor": "B", "estado_gestion": "Pedido"}])
     batch = stage_dataframe(data, "estados.csv", db_path=path)
-    assert confirm_batch(batch, db_path=path) == (0, 2)
     with get_connection(path) as connection:
-        assert connection.execute("SELECT count(*) FROM historial_estados").fetchone()[0] == 4
+        staged = connection.execute("SELECT id, datos_normalizados FROM filas_importacion WHERE lote_id = ? LIMIT 1",
+                                    (batch,)).fetchone()
+        old_data = json.loads(staged["datos_normalizados"])
+        old_data.update(estado_gestion="Pedido", precio_compra="99")
+        connection.execute("UPDATE filas_importacion SET datos_normalizados = ? WHERE id = ?",
+                           (json.dumps(old_data), staged["id"]))
+    assert confirm_batch(batch, db_path=path) == (0, 0)
+    with get_connection(path) as connection:
+        assert connection.execute("SELECT count(*) FROM historial_estados").fetchone()[0] == 2
         assert [row[0] for row in connection.execute("SELECT estado_gestion FROM repuestos ORDER BY codigo_proveedor")] == [
-            "en_cotizacion", "pedido"]
+            "aprobado", "en_sap"]
         assert connection.execute("SELECT estado FROM lotes_importacion WHERE id = ?", (batch,)).fetchone()[0] == "confirmed"
 
 

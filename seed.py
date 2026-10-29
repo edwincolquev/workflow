@@ -40,6 +40,7 @@ def seed_data():
                     username=username,
                     email=email,
                     password_hash=hash_password(password),
+                    access_level="Total" if role_name == "Administrador" else "Escritura",
                     full_name=full_name,
                     active=True
                 )

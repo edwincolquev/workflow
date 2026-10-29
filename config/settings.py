@@ -50,4 +50,8 @@ def has_access(user, section):
     if section == 'catalogo':
         return True
     roles = user.get('roles') or ([user['role']] if user.get('role') else [])
-    return any(ROLE_ACCESS.get(role, {}).get(section, False) for role in roles)
+    allowed = any(ROLE_ACCESS.get(role, {}).get(section, False) for role in roles)
+    if section == 'admin':
+        from permissions import can_manage
+        return allowed and can_manage(user)
+    return allowed

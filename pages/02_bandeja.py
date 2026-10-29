@@ -15,6 +15,7 @@ from components.ui_helpers import UIHelpers
 from components.comments import CommentsComponent
 from components.attachments import AttachmentsComponent
 from config.settings import has_access
+from permissions import can_write
 from engine import WorkflowEngine
 
 # 1. Access Control
@@ -26,6 +27,10 @@ user_role = st.session_state.user['role']
 if not has_access(st.session_state.user, 'bandeja'):
     st.error("Acceso denegado: Tu rol no tiene permisos para ver esta sección.")
     st.stop()
+
+READ_ONLY = not can_write(st.session_state.user)
+if READ_ONLY:
+    st.info("Modo Lectura: puede consultar y filtrar, pero no modificar procesos o tareas.")
 
 # Apply CSS
 UIHelpers.apply_custom_css()
@@ -228,22 +233,24 @@ with get_db() as db:
                     selected_proc_id = st.selectbox(
                         "Tipo de Proceso *",
                         options=[p.id for p in active_processes],
-                        format_func=lambda x: next((p.name for p in active_processes if p.id == x), str(x))
+                        format_func=lambda x: next((p.name for p in active_processes if p.id == x), str(x)),
+                        disabled=READ_ONLY
                     )
                     process_title = st.text_input(
                         "Título del Proceso *",
-                        placeholder="Ej. TAREA 21"
+                        placeholder="Ej. TAREA 21", disabled=READ_ONLY
                     )
                 with col2:
                     brand_options = [None] + [b.id for b in active_brands]
                     selected_brand_id = st.selectbox(
                         "Marca *",
                         options=brand_options,
-                        format_func=lambda x: next((f"{b.name} ({b.u_negocio})" for b in active_brands if b.id == x), "-- Seleccionar Marca --") if x is not None else "-- Seleccionar Marca --"
+                        format_func=lambda x: next((f"{b.name} ({b.u_negocio})" for b in active_brands if b.id == x), "-- Seleccionar Marca --") if x is not None else "-- Seleccionar Marca --",
+                        disabled=READ_ONLY
                     )
                     docnum_input = st.text_input(
                         "DocNum (Opcional)",
-                        placeholder="Ej. 10045"
+                        placeholder="Ej. 10045", disabled=READ_ONLY
                     )
                     st.markdown("<p style='font-size:0.8rem;color:#94a3b8;margin-top:-10px;'>Puede completarse después desde el detalle del proceso.</p>", unsafe_allow_html=True)
 
@@ -252,7 +259,7 @@ with get_db() as db:
                 if selected_proc and selected_proc.description:
                     st.info(f"**{selected_proc.name}**: {selected_proc.description}")
 
-                submitted = st.form_submit_button("🚀 Crear Proceso", use_container_width=True, type="primary")
+                submitted = st.form_submit_button("🚀 Crear Proceso", use_container_width=True, type="primary", disabled=READ_ONLY)
 
                 if submitted:
                     clean_title = process_title.strip().upper()
@@ -669,7 +676,7 @@ with get_db() as db:
                     with st.form(key=f"edit_instance_form_{instance.id}"):
                         edit_title_input = st.text_input(
                             "Nuevo Título del Proceso:",
-                            value=instance.title
+                            value=instance.title, disabled=READ_ONLY
                         )
                         active_brands_list = db.query(WorkflowBrand).filter(WorkflowBrand.active == True).all()
                         current_brand_idx = 0
@@ -681,10 +688,10 @@ with get_db() as db:
                             "Marca / Categoría:",
                             options=brand_ids,
                             format_func=lambda x: next((f"{b.name} ({b.u_negocio})" for b in active_brands_list if b.id == x), str(x)),
-                            index=current_brand_idx
+                            index=current_brand_idx, disabled=READ_ONLY
                         )
                         
-                        save_instance_changes = st.form_submit_button("💾 Guardar Cambios del Proceso", use_container_width=True)
+                        save_instance_changes = st.form_submit_button("💾 Guardar Cambios del Proceso", use_container_width=True, disabled=READ_ONLY)
                         
                         if save_instance_changes:
                             new_clean_title = edit_title_input.strip().upper()
@@ -735,9 +742,9 @@ with get_db() as db:
             # ─── Email History Expander ────────────────────────────────────────────────
             with st.expander("✉️ Enviar Historial del Workflow por Correo"):
                 with st.form(key="email_workflow_report_form"):
-                    dest_email = st.text_input("Correo Destinatario:", placeholder="ej. gerente@empresa.com")
-                    message = st.text_area("Mensaje adicional (Opcional):", placeholder="Adjunto el historial del workflow solicitado...")
-                    send_btn = st.form_submit_button("Enviar Historial")
+                    dest_email = st.text_input("Correo Destinatario:", placeholder="ej. gerente@empresa.com", disabled=READ_ONLY)
+                    message = st.text_area("Mensaje adicional (Opcional):", placeholder="Adjunto el historial del workflow solicitado...", disabled=READ_ONLY)
+                    send_btn = st.form_submit_button("Enviar Historial", disabled=READ_ONLY)
                     if send_btn:
                         if not dest_email.strip():
                             st.error("Por favor, ingrese un correo destinatario.")
@@ -823,7 +830,7 @@ with get_db() as db:
                         comment_input = st.text_area(
                             "Comentario / Observación (Obligatorio):",
                             placeholder="Ingresa detalles sobre este avance...",
-                            key=f"comment_{at.id}"
+                            key=f"comment_{at.id}", disabled=READ_ONLY
                         )
 
                         # Render task-specific ERP query and DocNum editor if configured
@@ -841,12 +848,12 @@ with get_db() as db:
                                         f"Ingresar DocNum para la consulta '{task_custom_query.name}':",
                                         value=active_docnum,
                                         placeholder="Ej. 10045",
-                                        key=f"qdocnum_input_task_{at.id}"
+                                        key=f"qdocnum_input_task_{at.id}", disabled=READ_ONLY
                                     )
                                 with col_qdoc2:
                                     st.write("") # spacing
                                     st.write("")
-                                    button_clicked = st.button("💾 Guardar DocNum", key=f"save_qdocnum_task_{at.id}", use_container_width=True)
+                                    button_clicked = st.button("💾 Guardar DocNum", key=f"save_qdocnum_task_{at.id}", use_container_width=True, disabled=READ_ONLY)
                                     if button_clicked:
                                         if not input_qdocnum.strip():
                                             st.error("El DocNum no puede estar vacío.")
@@ -937,19 +944,19 @@ with get_db() as db:
                                 "DocNum (Opcional):",
                                 value=active_docnum,
                                 placeholder="Ej. 10045",
-                                key=f"docnum_inline_{at.id}"
+                                key=f"docnum_inline_{at.id}", disabled=READ_ONLY
                             )
 
                         # File uploader option
                         uploaded_file = st.file_uploader(
                             "Adjuntar archivo a esta etapa (Opcional):",
-                            key=f"task_upload_{at.id}"
+                            key=f"task_upload_{at.id}", disabled=READ_ONLY
                         )
 
                         is_task_node = (at.node.type == 'TASK')
                         if is_task_node:
                             btn_label = "Confirmar y Continuar" if len(node_transitions) > 1 else (node_transitions[0].action_name if node_transitions else "Completar Tarea")
-                            if st.button(f"➡️ {btn_label}", key=f"action_btn_confirm_{at.id}", use_container_width=True):
+                            if st.button(f"➡️ {btn_label}", key=f"action_btn_confirm_{at.id}", use_container_width=True, disabled=READ_ONLY):
                                 if not comment_input.strip():
                                     st.error("⚠️ Debes ingresar un comentario u observación para avanzar.")
                                 elif node_transitions:
@@ -977,7 +984,7 @@ with get_db() as db:
                                 cols = st.columns(len(node_transitions))
                                 for idx, trans in enumerate(node_transitions):
                                     with cols[idx]:
-                                        if st.button(f"➡️ {trans.action_name}", key=f"action_btn_{trans.id}", use_container_width=True):
+                                        if st.button(f"➡️ {trans.action_name}", key=f"action_btn_{trans.id}", use_container_width=True, disabled=READ_ONLY):
                                             if not comment_input.strip():
                                                 st.error("⚠️ Debes ingresar un comentario u observación para avanzar.")
                                             else:
@@ -1002,8 +1009,8 @@ with get_db() as db:
                 if st.session_state.user['role'] in ['Administrador', 'Gerencia']:
                     with st.expander("⚠️ Opciones Avanzadas (Administración)"):
                         st.markdown("<p style='color: #ef4444;'><b>Cancelar Instancia de Workflow</b></p>", unsafe_allow_html=True)
-                        cancel_reason = st.text_input("Motivo de cancelación (Requerido):", placeholder="Ej. Orden de compra cancelada en SAP.")
-                        if st.button("Confirmar Cancelación", type="primary"):
+                        cancel_reason = st.text_input("Motivo de cancelación (Requerido):", placeholder="Ej. Orden de compra cancelada en SAP.", disabled=READ_ONLY)
+                        if st.button("Confirmar Cancelación", type="primary", disabled=READ_ONLY):
                             if not cancel_reason.strip():
                                 st.error("Debes ingresar el motivo de cancelación.")
                             else:
@@ -1024,8 +1031,8 @@ with get_db() as db:
 
                 if st.session_state.user['role'] in ['Administrador', 'Gerencia']:
                     with st.expander("🛠️ Reabrir Proceso Cerrado"):
-                        reopen_reason = st.text_area("Motivo de la reapertura (Requerido):", placeholder="Detalla por qué es necesario reabrir este flujo...")
-                        if st.button("Confirmar Reapertura", key="reopen_confirm"):
+                        reopen_reason = st.text_area("Motivo de la reapertura (Requerido):", placeholder="Detalla por qué es necesario reabrir este flujo...", disabled=READ_ONLY)
+                        if st.button("Confirmar Reapertura", key="reopen_confirm", disabled=READ_ONLY):
                             if not reopen_reason.strip():
                                 st.error("Por favor, ingresa un motivo para reabrir el flujo.")
                             else:

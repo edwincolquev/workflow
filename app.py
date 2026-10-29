@@ -5,6 +5,7 @@ from database import get_db, init_db
 from models import WorkflowUser, WorkflowTask, WorkflowNode, WorkflowTransition, WorkflowHistory
 from components.ui_helpers import UIHelpers
 from config.settings import has_access
+from permissions import can_write
 
 ROLE_PRIORITY = ("Administrador", "Gerencia", "Compras", "Importaciones", "Logística")
 
@@ -14,7 +15,7 @@ def _session_user_info(user):
     primary = next((role for role in ROLE_PRIORITY if role in roles),
                    roles[0] if roles else "Sin Rol")
     return {"id": user.id, "username": user.username, "full_name": user.full_name,
-            "role": primary, "roles": roles}
+            "role": primary, "roles": roles, "access_level": user.access_level}
 
 # Initialize database tables automatically (cached to run once per process)
 @st.cache_resource
@@ -143,6 +144,9 @@ if "token" in st.query_params:
             user = db.query(WorkflowUser).filter(WorkflowUser.id == user_id).first()
             if not user:
                 st.error("❌ El usuario firmante del token no existe.")
+                st.stop()
+            if not user.active or not can_write({"access_level": user.access_level}):
+                st.error("Usuario inactivo o sin permiso de Escritura para procesar tareas.")
                 st.stop()
                 
             user_role_ids = [r.id for r in user.roles]
@@ -516,6 +520,7 @@ else:
         <div style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7;">Usuario Conectado</div>
         <div style="font-weight: 600; font-size: 1.1rem; margin-top: 2px;">{st.session_state.user['full_name']}</div>
         <div style="font-size: 0.85rem; margin-top: 2px; color: #a5f3fc;">Rol: {st.session_state.user['role']}</div>
+        <div style="font-size: 0.85rem; margin-top: 2px; color: #a5f3fc;">Permiso: {st.session_state.user['access_level']}</div>
     </div>
     """, unsafe_allow_html=True)
     

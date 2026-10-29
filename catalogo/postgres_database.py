@@ -100,6 +100,11 @@ class PostgresConnection:
             raise
 
     def execute(self, query: str, parameters=()) -> Result:
+        from permissions import require_write, current_user, can_write
+        user = current_user()
+        if user is not None and not can_write(user):
+            if not query.lstrip().upper().startswith(("SELECT", "SHOW", "EXPLAIN")):
+                require_write()
         sql, inserted = _sql(query)
         cursor = self.raw.cursor()
         cursor.execute(sql, tuple(_parameter(value) for value in parameters))

@@ -2,6 +2,7 @@ import streamlit as st
 from datetime import datetime
 from sqlalchemy.orm import Session
 from models import WorkflowComment, WorkflowHistory, WorkflowUser
+from permissions import can_write
 
 class CommentsComponent:
     @staticmethod
@@ -23,7 +24,8 @@ class CommentsComponent:
                 height=80, 
                 placeholder="Ej. Proveedor confirmó embarque para el 15 de julio."
             )
-            submit_btn = st.form_submit_button("Registrar Comentario")
+            submit_btn = st.form_submit_button("Registrar Comentario",
+                                               disabled=not can_write(st.session_state.get("user")))
             
             if submit_btn and comment_text.strip():
                 # Add to DB

@@ -3,6 +3,7 @@ import streamlit as st
 from datetime import datetime
 from sqlalchemy.orm import Session
 from models import WorkflowAttachment, WorkflowHistory
+from permissions import can_write
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -26,12 +27,14 @@ class AttachmentsComponent:
         # 2. Form to upload new attachment
         uploaded_file = st.file_uploader(
             "Cargar documento (PDF, Excel, Imagen, etc.)", 
-            key=f"uploader_{instance_id}"
+            key=f"uploader_{instance_id}",
+            disabled=not can_write(st.session_state.get("user"))
         )
         
         if uploaded_file is not None:
             # Add upload button
-            if st.button("Guardar Archivo Adjunto", key=f"save_file_btn_{instance_id}"):
+            if st.button("Guardar Archivo Adjunto", key=f"save_file_btn_{instance_id}",
+                         disabled=not can_write(st.session_state.get("user"))):
                 from services.storage_service import StorageService
                 
                 file_bytes = uploaded_file.getbuffer().tobytes()

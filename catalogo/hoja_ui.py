@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import pandas as pd
 import streamlit as st
+from permissions import can_write
 
 from catalogo.database import fetch_all
 from catalogo.gestion import ESTADOS, NUMERICOS
@@ -60,6 +61,9 @@ def _al_editar(editor_key):
 
 
 def mostrar_hoja(rows, scope, total):
+    read_only = not can_write(st.session_state.get("user"))
+    if read_only and hay_cambios_hoja():
+        st.session_state.pop(STATE_KEY, None)
     rows = [dict(row) for row in rows]
     state = st.session_state.get(STATE_KEY)
     if state is None or (state["scope"] != scope and not hay_cambios_hoja()):
@@ -112,6 +116,8 @@ def mostrar_hoja(rows, scope, total):
         options.update(row[field] for row in state["borrador"] if row[field])
         config[field] = st.column_config.SelectboxColumn(LABELS[field], options=sorted(options), width="medium")
     disabled = ["id", "fecha_actualizacion", "_index"]
+    if read_only:
+        disabled.extend(CAMPOS_EDITABLES)
     if all(row["estado_gestion"] == "en_sap" for row in state["originales"]):
         disabled += ["estado_gestion", *NUMERICOS]
     st.data_editor(data, hide_index=True, width="stretch", height=min(580, 38 + 35 * len(data)),
@@ -136,7 +142,7 @@ def mostrar_hoja(rows, scope, total):
                                        anterior="" if previous is None else str(previous), nuevo="" if value is None else str(value)))
             st.dataframe(review, hide_index=True, width="stretch")
     save, discard = st.columns(2)
-    if save.button("Guardar cambios de la hoja", type="primary", disabled=not changes):
+    if save.button("Guardar cambios de la hoja", type="primary", disabled=read_only or not changes):
         try:
             count = guardar_cambios_hoja(state["originales"], changes)
             st.session_state.pop(STATE_KEY)

@@ -13,6 +13,7 @@ from models import (
 )
 from components.ui_helpers import UIHelpers
 from config.settings import has_access
+from permissions import ACCESS_LEVELS, ESCRITURA
 from services.workflow_validator import WorkflowValidatorService
 
 # 1. Access Control
@@ -502,6 +503,7 @@ with get_db() as db:
                 'Nombre Completo': u.full_name,
                 'Correo Electrónico': u.email or "Sin correo",
                 'Roles Asignados': roles_str,
+                'Permiso': u.access_level,
                 'Estado': "Activo" if u.active else "Inactivo"
             })
             
@@ -522,6 +524,9 @@ with get_db() as db:
                 with col_u2:
                     new_pass = st.text_input("Contraseña", type="password", placeholder="Contraseña segura")
                     selected_role_ids = st.multiselect("Roles Asignados", options=list(role_map.keys()), format_func=lambda x: role_map[x], key="new_user_roles_sel")
+                    new_access_level = st.selectbox("Permiso general", ACCESS_LEVELS,
+                                                    index=ACCESS_LEVELS.index(ESCRITURA), key="new_user_access",
+                                                    help="Lectura consulta; Escritura modifica; Total habilita Administración si también tiene el rol Administrador.")
                 
                 user_submit = st.form_submit_button("Crear Usuario")
                 if user_submit:
@@ -538,6 +543,7 @@ with get_db() as db:
                                 email=new_email.strip() if new_email.strip() else None,
                                 full_name=new_fullname.strip(),
                                 password_hash=pwd_hash,
+                                access_level=new_access_level,
                                 active=True
                             )
                             roles_to_assign = db.query(WorkflowRole).filter(WorkflowRole.id.in_(selected_role_ids)).all()
@@ -574,6 +580,12 @@ with get_db() as db:
                             format_func=lambda x: role_map[x],
                             key=f"edit_roles_{edit_user.id}"
                         )
+                        eu_access_level = st.selectbox(
+                            "Permiso general", ACCESS_LEVELS,
+                            index=ACCESS_LEVELS.index(edit_user.access_level),
+                            key=f"edit_access_{edit_user.id}",
+                            help="Total y rol Administrador son necesarios para administrar usuarios."
+                        )
                         
                     if st.form_submit_button("Actualizar Usuario"):
                         if not eu_fullname.strip() or not eu_role_ids:
@@ -582,6 +594,7 @@ with get_db() as db:
                             edit_user.full_name = eu_fullname.strip()
                             edit_user.email = eu_email.strip() if eu_email.strip() else None
                             edit_user.active = eu_active
+                            edit_user.access_level = eu_access_level
                             
                             # Update roles association
                             roles_to_assign = db.query(WorkflowRole).filter(WorkflowRole.id.in_(eu_role_ids)).all()

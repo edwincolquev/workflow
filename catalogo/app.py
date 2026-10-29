@@ -14,6 +14,7 @@ from catalogo.gestion import CAMPOS_GESTION, ESTADOS, guardar_repuesto
 from catalogo.gestion_ui import administrar_clasificacion, campos_clasificacion, campos_comerciales, mostrar_gestion
 from catalogo.hoja_ui import hay_cambios_hoja, mostrar_hoja
 from config.settings import has_access
+from permissions import can_write
 
 
 if not st.session_state.get("authenticated") or not has_access(
@@ -26,9 +27,13 @@ if not using_postgres():
     st.error("Configure CATALOGO_DATABASE_URL para conectar Catálogo con Supabase.")
     st.stop()
 
+READ_ONLY = not can_write(st.session_state.user)
+
 st.set_page_config(page_title="Catálogo de repuestos", page_icon="+", layout="wide")
 initialize_database()
 st.title("Catálogo de repuestos")
+if READ_ONLY:
+    st.info("Modo Lectura: puede consultar, filtrar y descargar información; los cambios están deshabilitados.")
 st.caption("Repuestos, aplicaciones, importación y descripciones · Base: " +
            ("Supabase" if using_postgres() else "SQLite local"))
 
@@ -83,12 +88,12 @@ with catalog_tab:
     with st.expander("Nuevo repuesto"):
         new_classification = campos_clasificacion("nuevo")
         with st.form("create_part", clear_on_submit=True):
-            supplier = st.text_input("Código proveedor *")
-            sap = st.text_input("Código SAP")
-            descripcion = st.text_input("Descripción")
-            medida = st.text_input("Medida")
+            supplier = st.text_input("Código proveedor *", disabled=READ_ONLY)
+            sap = st.text_input("Código SAP", disabled=READ_ONLY)
+            descripcion = st.text_input("Descripción", disabled=READ_ONLY)
+            medida = st.text_input("Medida", disabled=READ_ONLY)
             new_commercial = campos_comerciales()
-            create = st.form_submit_button("Crear repuesto", type="primary")
+            create = st.form_submit_button("Crear repuesto", type="primary", disabled=READ_ONLY)
         if create:
             if not supplier.strip():
                 st.error("El código de proveedor es obligatorio.")
@@ -115,12 +120,12 @@ with catalog_tab:
         st.subheader(f"Administrar repuesto: {part['codigo_proveedor'] or part['codigo_sap'] or repuesto_id}")
         with st.form(f"edit_part_{repuesto_id}"):
             cols = st.columns(2)
-            supplier_edit = cols[0].text_input("Código proveedor *", value=part["codigo_proveedor"] or "")
-            sap_edit = cols[1].text_input("Código SAP", value=part["codigo_sap"] or "")
-            description_edit = st.text_input("Descripción", value=part["descripcion"] or "")
-            measure_edit = st.text_input("Medida", value=part["medida"] or "")
-            active_edit = st.checkbox("Activo", value=bool(part["activo"]))
-            save_part = st.form_submit_button("Guardar cambios", type="primary")
+            supplier_edit = cols[0].text_input("Código proveedor *", value=part["codigo_proveedor"] or "", disabled=READ_ONLY)
+            sap_edit = cols[1].text_input("Código SAP", value=part["codigo_sap"] or "", disabled=READ_ONLY)
+            description_edit = st.text_input("Descripción", value=part["descripcion"] or "", disabled=READ_ONLY)
+            measure_edit = st.text_input("Medida", value=part["medida"] or "", disabled=READ_ONLY)
+            active_edit = st.checkbox("Activo", value=bool(part["activo"]), disabled=READ_ONLY)
+            save_part = st.form_submit_button("Guardar cambios", type="primary", disabled=READ_ONLY)
         if save_part:
             if not supplier_edit.strip():
                 st.error("El código de proveedor es obligatorio.")
@@ -149,8 +154,8 @@ with catalog_tab:
             oems = fetch_all("SELECT id, codigo_oem FROM codigos_oem WHERE repuesto_id = ? ORDER BY codigo_oem", (repuesto_id,))
             st.dataframe([dict(row) for row in oems], hide_index=True, width="stretch")
             with st.form(f"oem_add_{repuesto_id}", clear_on_submit=True):
-                oem_value = st.text_input("Nuevo OEM")
-                add_oem = st.form_submit_button("Añadir OEM")
+                oem_value = st.text_input("Nuevo OEM", disabled=READ_ONLY)
+                add_oem = st.form_submit_button("Añadir OEM", disabled=READ_ONLY)
             if add_oem and oem_value.strip():
                 try:
                     with get_connection() as connection:
@@ -170,8 +175,8 @@ with catalog_tab:
                                           format_func=lambda value: next(row["codigo_oem"] for row in oems if row["id"] == value))
                 current_oem = next(row["codigo_oem"] for row in oems if row["id"] == oem_delete)
                 with st.form(f"oem_edit_{repuesto_id}_{oem_delete}"):
-                    oem_edit = st.text_input("Editar código OEM", value=current_oem)
-                    save_oem = st.form_submit_button("Guardar OEM")
+                    oem_edit = st.text_input("Editar código OEM", value=current_oem, disabled=READ_ONLY)
+                    save_oem = st.form_submit_button("Guardar OEM", disabled=READ_ONLY)
                 if save_oem:
                     if not oem_edit.strip():
                         st.error("El código OEM no puede quedar vacío.")
@@ -191,7 +196,7 @@ with catalog_tab:
                             st.rerun()
                         except Exception as error:
                             st.error(str(error))
-                if st.button("Eliminar OEM"):
+                if st.button("Eliminar OEM", disabled=READ_ONLY):
                     with get_connection() as connection:
                         connection.execute("DELETE FROM codigos_oem WHERE id = ? AND repuesto_id = ?", (oem_delete, repuesto_id))
                         refresh_long_description(connection, repuesto_id)
@@ -203,9 +208,9 @@ with catalog_tab:
                                 WHERE repuesto_id = ? ORDER BY tipo_referencia, codigo_referencia""", (repuesto_id,))
             st.dataframe([dict(row) for row in refs], hide_index=True, width="stretch")
             with st.form(f"ref_add_{repuesto_id}", clear_on_submit=True):
-                ref_type = st.text_input("Tipo de referencia")
-                ref_code = st.text_input("Código de referencia")
-                add_ref = st.form_submit_button("Añadir referencia")
+                ref_type = st.text_input("Tipo de referencia", disabled=READ_ONLY)
+                ref_code = st.text_input("Código de referencia", disabled=READ_ONLY)
+                add_ref = st.form_submit_button("Añadir referencia", disabled=READ_ONLY)
             if add_ref:
                 if not ref_type.strip() or not ref_code.strip():
                     st.error("Tipo y código son obligatorios.")
@@ -230,9 +235,9 @@ with catalog_tab:
                                               for row in refs if row["id"] == value))
                 current_ref = next(row for row in refs if row["id"] == ref_delete)
                 with st.form(f"ref_edit_{repuesto_id}_{ref_delete}"):
-                    ref_type_edit = st.text_input("Editar tipo", value=current_ref["tipo_referencia"])
-                    ref_code_edit = st.text_input("Editar código", value=current_ref["codigo_referencia"])
-                    save_ref = st.form_submit_button("Guardar referencia")
+                    ref_type_edit = st.text_input("Editar tipo", value=current_ref["tipo_referencia"], disabled=READ_ONLY)
+                    ref_code_edit = st.text_input("Editar código", value=current_ref["codigo_referencia"], disabled=READ_ONLY)
+                    save_ref = st.form_submit_button("Guardar referencia", disabled=READ_ONLY)
                 if save_ref:
                     if not ref_type_edit.strip() or not ref_code_edit.strip():
                         st.error("Tipo y código son obligatorios.")
@@ -255,7 +260,7 @@ with catalog_tab:
                             st.rerun()
                         except Exception as error:
                             st.error(str(error))
-                if st.button("Eliminar referencia"):
+                if st.button("Eliminar referencia", disabled=READ_ONLY):
                     execute("DELETE FROM referencias_cruzadas WHERE id = ? AND repuesto_id = ?", (ref_delete, repuesto_id))
                     st.rerun()
 
@@ -278,15 +283,15 @@ with catalog_tab:
         selected = app_by_id.get(app_choice)
         with st.form(f"application_{repuesto_id}_{app_choice}"):
             cols = st.columns(2)
-            marca_vehiculo = cols[0].text_input("Marca vehículo *", value=selected["marca_vehiculo"] if selected else "")
-            modelo_vehiculo = cols[1].text_input("Modelo *", value=selected["modelo_vehiculo"] if selected else "")
-            codigo_motor = cols[0].text_input("Código motor", value=(selected["codigo_motor"] or "") if selected else "")
-            descripcion_motor = cols[1].text_input("Descripción motor", value=(selected["descripcion_motor"] or "") if selected else "")
-            cilindrada = cols[0].text_input("Cilindrada", value=str(selected["cilindrada"] or "") if selected else "")
-            anio_desde = cols[1].text_input("Año desde", value=str(selected["anio_desde"] or "") if selected else "")
-            anio_hasta = cols[0].text_input("Año hasta", value=str(selected["anio_hasta"] or "") if selected else "")
-            texto_aplicacion = st.text_input("Aplicación (texto adicional)", value=(selected["texto_aplicacion"] or "") if selected else "")
-            save_app = st.form_submit_button("Guardar aplicación")
+            marca_vehiculo = cols[0].text_input("Marca vehículo *", value=selected["marca_vehiculo"] if selected else "", disabled=READ_ONLY)
+            modelo_vehiculo = cols[1].text_input("Modelo *", value=selected["modelo_vehiculo"] if selected else "", disabled=READ_ONLY)
+            codigo_motor = cols[0].text_input("Código motor", value=(selected["codigo_motor"] or "") if selected else "", disabled=READ_ONLY)
+            descripcion_motor = cols[1].text_input("Descripción motor", value=(selected["descripcion_motor"] or "") if selected else "", disabled=READ_ONLY)
+            cilindrada = cols[0].text_input("Cilindrada", value=str(selected["cilindrada"] or "") if selected else "", disabled=READ_ONLY)
+            anio_desde = cols[1].text_input("Año desde", value=str(selected["anio_desde"] or "") if selected else "", disabled=READ_ONLY)
+            anio_hasta = cols[0].text_input("Año hasta", value=str(selected["anio_hasta"] or "") if selected else "", disabled=READ_ONLY)
+            texto_aplicacion = st.text_input("Aplicación (texto adicional)", value=(selected["texto_aplicacion"] or "") if selected else "", disabled=READ_ONLY)
+            save_app = st.form_submit_button("Guardar aplicación", disabled=READ_ONLY)
         if save_app:
             data = dict(marca_vehiculo=marca_vehiculo.strip(), modelo_vehiculo=modelo_vehiculo.strip(),
                         codigo_motor=codigo_motor.strip(), descripcion_motor=descripcion_motor.strip(),
@@ -304,15 +309,15 @@ with catalog_tab:
                     st.rerun()
             except Exception as error:
                 st.error(f"No fue posible guardar la aplicación: {error}")
-        if app_choice and st.button("Eliminar aplicación"):
+        if app_choice and st.button("Eliminar aplicación", disabled=READ_ONLY):
             with get_connection() as connection:
                 connection.execute("DELETE FROM aplicaciones_repuestos WHERE id = ? AND repuesto_id = ?", (app_choice, repuesto_id))
                 refresh_long_description(connection, repuesto_id)
             st.rerun()
 
         st.divider()
-        confirm_delete = st.checkbox("Confirmo que deseo eliminar este repuesto y sus datos asociados")
-        if st.button("Eliminar repuesto", disabled=not confirm_delete):
+        confirm_delete = st.checkbox("Confirmo que deseo eliminar este repuesto y sus datos asociados", disabled=READ_ONLY)
+        if st.button("Eliminar repuesto", disabled=READ_ONLY or not confirm_delete):
             execute("DELETE FROM repuestos WHERE id = ?", (repuesto_id,))
             st.rerun()
 
@@ -342,7 +347,7 @@ with import_tab:
     st.caption("La plantilla con datos incluye únicamente los repuestos que coinciden con ambos filtros.")
     st.caption("Los precios de compra y venta de la plantilla están expresados en USD.")
     st.caption("Un código de proveedor repetido añade datos al mismo repuesto. Los campos informados del repuesto se actualizan; los OEM y las referencias nuevos se añaden sin duplicados.")
-    source_file = st.file_uploader("Archivo maestro", type=["csv", "xlsx", "xls"])
+    source_file = st.file_uploader("Archivo maestro", type=["csv", "xlsx", "xls"], disabled=READ_ONLY)
     if source_file:
         try:
             with tempfile.TemporaryDirectory() as folder:
@@ -351,7 +356,7 @@ with import_tab:
                 dataframe = read_source(source_path)
             st.write(f"{len(dataframe)} filas detectadas")
             st.dataframe(dataframe.head(20), width="stretch", hide_index=True)
-            if st.button("Preparar carga", type="primary"):
+            if st.button("Preparar carga", type="primary", disabled=READ_ONLY):
                 lote_id = stage_dataframe(dataframe, source_file.name)
                 st.session_state["last_batch_id"] = lote_id
                 st.rerun()
@@ -409,7 +414,7 @@ with import_tab:
                                motor=data.get("codigo_motor"), aplicacion=data.get("texto_aplicacion"),
                                **{field + "_nuevo": data.get(field) for field in CAMPOS_GESTION}))
         st.dataframe(review, width="stretch", hide_index=True)
-        if batch["estado"] == "staged" and st.button("Confirmar filas válidas", type="primary"):
+        if batch["estado"] == "staged" and st.button("Confirmar filas válidas", type="primary", disabled=READ_ONLY):
             try:
                 inserted, updated = confirm_batch(lote_id)
                 st.success(f"Confirmado: {inserted} repuestos nuevos y {updated} existentes actualizados.")
@@ -425,4 +430,4 @@ with batches_tab:
     st.dataframe([dict(row) for row in batches], width="stretch", hide_index=True)
 
 with classification_tab:
-    administrar_clasificacion()
+    administrar_clasificacion(read_only=READ_ONLY)

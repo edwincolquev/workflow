@@ -1,6 +1,8 @@
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.sql.dml import Delete, Insert, Update
+from sqlalchemy.sql.elements import TextClause
 from contextlib import contextmanager
 
 # Ensure directory localdb exists
@@ -99,12 +101,39 @@ else:
         pool_pre_ping=True
     )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+class PortalSession(Session):
+    def flush(self, objects=None):
+        if self.info.get("read_only") and (self.new or self.dirty or self.deleted):
+            raise PermissionError("Su permiso es Lectura; no puede modificar datos.")
+        return super().flush(objects)
+
+    def execute(self, statement, *args, **kwargs):
+        if self.info.get("read_only"):
+            if isinstance(statement, (Insert, Update, Delete)):
+                raise PermissionError("Su permiso es Lectura; no puede modificar datos.")
+            if isinstance(statement, TextClause):
+                sql = statement.text.lstrip().upper()
+                if not sql.startswith(("SELECT", "SHOW", "EXPLAIN")):
+                    raise PermissionError("Su permiso es Lectura; no puede modificar datos.")
+        return super().execute(statement, *args, **kwargs)
+
+
+@event.listens_for(PortalSession, "after_begin")
+def set_read_only_transaction(session, transaction, connection):
+    if session.info.get("read_only") and connection.dialect.name == "postgresql":
+        connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=PortalSession)
 Base = declarative_base()
 
 @contextmanager
 def get_db():
     db = SessionLocal()
+    from permissions import can_write, current_user
+    user = current_user()
+    if user is not None and not can_write(user):
+        db.info["read_only"] = True
     try:
         yield db
         db.commit()
@@ -124,9 +153,18 @@ def init_db():
     # Dynamic imports of models to ensure they are registered in metadata
     import models
     Base.metadata.create_all(bind=engine)
+
+    # Existing accounts retain write access; administrators receive Total.
+    from sqlalchemy import inspect, text
+    if "access_level" not in {column["name"] for column in inspect(engine).get_columns("wf_user")}:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE wf_user ADD COLUMN access_level VARCHAR(20) NOT NULL DEFAULT 'Escritura'"))
+            conn.execute(text("""UPDATE wf_user SET access_level = 'Total'
+                WHERE id IN (SELECT ur.user_id FROM wf_user_role ur
+                             JOIN wf_role r ON r.id = ur.role_id
+                             WHERE r.name = 'Administrador')"""))
     
     # Auto-migrations for DB columns
-    from sqlalchemy import text
     migrations = [
         "ALTER TABLE wf_node ADD COLUMN sla_hours INTEGER;",
         "ALTER TABLE wf_node ADD COLUMN role_id INTEGER REFERENCES wf_role(id) ON DELETE SET NULL;",

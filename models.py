@@ -27,6 +27,7 @@ class WorkflowUser(Base):
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(100), nullable=False)
     active = Column(Boolean, default=True)
+    access_level = Column(String(20), nullable=False, default="Escritura", server_default="Escritura")
     
     roles = relationship('WorkflowRole', secondary=user_role_association, back_populates='users')
 

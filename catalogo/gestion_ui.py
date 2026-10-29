@@ -1,29 +1,33 @@
 """Controles de clasificación y gestión comercial para Streamlit."""
 
 import streamlit as st
+from permissions import can_write
 
 from catalogo.database import fetch_all, get_connection
 from catalogo.gestion import ESTADOS, NUMERICOS, TRANSICIONES, guardar_repuesto
 
 
 def campos_clasificacion(prefix, current=None):
+    read_only = not can_write(st.session_state.get("user"))
     units = {row["id"]: row["nombre"] for row in fetch_all("SELECT id, nombre FROM unidades_medida ORDER BY nombre")}
     brands = {row["id"]: row["nombre"] for row in fetch_all("SELECT id, nombre FROM marcas_repuestos ORDER BY nombre")}
     cols = st.columns(3)
     unit_options, brand_options = [None, *units], [None, *brands]
     unit_id = cols[0].selectbox("Unidad", unit_options,
                                index=unit_options.index(current["unidad_id"]) if current else 0,
-                               format_func=lambda value: units.get(value, "Sin asignar"), key=f"{prefix}_unidad")
+                               format_func=lambda value: units.get(value, "Sin asignar"), key=f"{prefix}_unidad",
+                               disabled=read_only)
     brand_id = cols[1].selectbox("Marca comercial", brand_options,
                                 index=brand_options.index(current["marca_id"]) if current else 0,
-                                format_func=lambda value: brands.get(value, "Sin asignar"), key=f"{prefix}_marca")
+                                format_func=lambda value: brands.get(value, "Sin asignar"), key=f"{prefix}_marca",
+                                disabled=read_only)
     categories = {row["id"]: row["nombre"] for row in fetch_all(
         "SELECT id, nombre FROM categorias_repuestos WHERE marca_id = ? ORDER BY nombre", (brand_id,)
     )}
     category_options = [None, *categories]
     current_category = current["categoria_id"] if current and current["categoria_id"] in categories else None
     category_id = cols[2].selectbox("Categoría", category_options,
-                                   index=category_options.index(current_category), disabled=brand_id is None,
+                                   index=category_options.index(current_category), disabled=read_only or brand_id is None,
                                    format_func=lambda value: categories.get(value, "Sin asignar"),
                                    key=f"{prefix}_categoria_{brand_id}")
     st.caption("Las categorías disponibles corresponden a la marca seleccionada. Puede administrar las listas en Clasificación.")
@@ -31,9 +35,10 @@ def campos_clasificacion(prefix, current=None):
 
 
 def campos_comerciales(current=None):
+    read_only = not can_write(st.session_state.get("user"))
     closed = bool(current and current["estado_gestion"] == "en_sap")
     states = [current["estado_gestion"], *TRANSICIONES[current["estado_gestion"]]] if current else ["propuesto", "en_sap"]
-    state = st.selectbox("Estado de gestión", states, format_func=ESTADOS.get, disabled=closed)
+    state = st.selectbox("Estado de gestión", states, format_func=ESTADOS.get, disabled=closed or read_only)
     st.caption("Precios unitarios en dólares estadounidenses (USD). Cantidades expresadas en la unidad del repuesto.")
     labels = ("Mínimo de compra", "Precio de compra (USD)", "Precio de venta (USD)", "Cantidad de compra")
     data = {"estado_gestion": state}
@@ -41,7 +46,7 @@ def campos_comerciales(current=None):
     for index, (field, label) in enumerate(zip(NUMERICOS, labels)):
         value = float(current[field]) if current and current[field] is not None else None
         data[field] = cols[index % 2].number_input(label, min_value=0.0001 if field == "minimo_compra" else 0.0,
-                                                  value=value, step=0.01, format="%.4f", disabled=closed)
+                                                  value=value, step=0.01, format="%.4f", disabled=closed or read_only)
     if closed:
         st.info("Seguimiento comercial cerrado: la gestión de este repuesto continúa en SAP.")
     if data["minimo_compra"] is not None and data["cantidad_compra"] is not None and data["cantidad_compra"] < data["minimo_compra"]:
@@ -54,7 +59,8 @@ def mostrar_gestion(current):
     classification = campos_clasificacion(f"editar_{current['id']}", current)
     with st.form(f"gestion_{current['id']}"):
         commercial = campos_comerciales(current)
-        save = st.form_submit_button("Guardar clasificación y gestión")
+        save = st.form_submit_button("Guardar clasificación y gestión",
+                                     disabled=not can_write(st.session_state.get("user")))
     if save:
         try:
             with get_connection() as connection:
@@ -69,7 +75,7 @@ def mostrar_gestion(current):
                      hide_index=True, width="stretch")
 
 
-def administrar_clasificacion():
+def administrar_clasificacion(read_only=False):
     st.subheader("Unidades, marcas comerciales y categorías")
     tables = {"Unidades": "unidades_medida", "Marcas comerciales": "marcas_repuestos", "Categorías": "categorias_repuestos"}
     kind = st.selectbox("Lista a administrar", list(tables))
@@ -84,6 +90,8 @@ def administrar_clasificacion():
     where = " WHERE marca_id = ?" if brand_id is not None else ""
     rows = fetch_all(f"SELECT id, nombre FROM {table}{where} ORDER BY nombre", (brand_id,) if where else ())
     st.dataframe([dict(row) for row in rows], hide_index=True, width="stretch")
+    if read_only:
+        return
     with st.form(f"alta_{table}_{brand_id}", clear_on_submit=True):
         name = st.text_input("Nombre nuevo")
         create = st.form_submit_button("Agregar")

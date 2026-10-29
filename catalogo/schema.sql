@@ -10,8 +10,7 @@ CREATE TABLE IF NOT EXISTS repuestos (
     marca_id INTEGER REFERENCES marcas_repuestos(id) ON DELETE RESTRICT,
     categoria_id INTEGER REFERENCES categorias_repuestos(id) ON DELETE RESTRICT,
     estado_gestion TEXT NOT NULL DEFAULT 'propuesto'
-        CHECK (estado_gestion IN ('propuesto', 'en_cotizacion', 'pendiente_aprobacion', 'aprobado', 'rechazado', 'pedido', 'en_sap'))
-        CHECK (estado_gestion <> 'en_sap' OR trim(coalesce(codigo_sap, '')) <> ''),
+        CHECK (estado_gestion IN ('propuesto', 'en_cotizacion', 'pendiente_aprobacion', 'aprobado', 'rechazado', 'pedido', 'en_sap')),
     minimo_compra REAL CHECK (minimo_compra IS NULL OR minimo_compra > 0),
     precio_compra REAL CHECK (precio_compra IS NULL OR precio_compra >= 0),
     precio_venta REAL CHECK (precio_venta IS NULL OR precio_venta >= 0),
@@ -19,7 +18,8 @@ CREATE TABLE IF NOT EXISTS repuestos (
     descripcion_larga TEXT,
     activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
     fecha_creacion TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    fecha_actualizacion TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    fecha_actualizacion TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion_estado TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS repuestos_codigo_sap_unico ON repuestos (upper(trim(codigo_sap))) WHERE codigo_sap IS NOT NULL AND trim(codigo_sap) <> '';

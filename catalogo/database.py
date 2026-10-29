@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import os
+import re
 from contextlib import closing, contextmanager
 from pathlib import Path
 
@@ -10,6 +11,63 @@ from catalogo.migrations import migrate_management, migrate_spanish_names
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DB_PATH = Path(os.environ.get("CATALOGO_DB_PATH") or BASE_DIR / "data" / "catalogo.sqlite3")
 SCHEMA_PATH = BASE_DIR / "schema.sql"
+_OLD_SAP_CHECK = re.compile(
+    r"CHECK\s*\(\s*estado_gestion\s*<>\s*'en_sap'\s*OR\s*"
+    r"trim\s*\(\s*coalesce\s*\(\s*codigo_sap\s*,\s*''\s*\)\s*\)\s*<>\s*''\s*\)",
+    re.IGNORECASE,
+)
+
+
+def _migrate_free_states(path: Path) -> None:
+    """Retira el CHECK antiguo de En SAP conservando IDs, relaciones e índices."""
+    with closing(sqlite3.connect(path)) as connection:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'repuestos'"
+        ).fetchone()
+        if not row or not _OLD_SAP_CHECK.search(row[0]):
+            return
+        backup_path = path.with_name(path.stem + ".pre_estado_libre" + path.suffix)
+        if not backup_path.exists():
+            with closing(sqlite3.connect(backup_path)) as backup:
+                connection.backup(backup)
+        dependencies = [item[0] for item in connection.execute(
+            "SELECT sql FROM sqlite_master WHERE tbl_name = 'repuestos' "
+            "AND type IN ('index', 'trigger') AND sql IS NOT NULL"
+        ).fetchall()]
+        external_triggers = connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' "
+            "AND tbl_name <> 'repuestos' AND instr(lower(sql), 'repuestos') > 0"
+        ).fetchall()
+        old_sql = row[0]
+        new_sql = _OLD_SAP_CHECK.sub("", old_sql, count=1)
+        new_sql = re.sub(r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?repuestos\b",
+                         "CREATE TABLE repuestos_nuevo", new_sql, count=1, flags=re.IGNORECASE)
+        columns = [item[1] for item in connection.execute("PRAGMA table_info(repuestos)")]
+        names = ", ".join(f'"{name}"' for name in columns)
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute("DROP VIEW IF EXISTS vista_repuestos")
+            for name, _ in external_triggers:
+                connection.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
+            connection.execute(new_sql)
+            connection.execute(f"INSERT INTO repuestos_nuevo ({names}) SELECT {names} FROM repuestos")
+            connection.execute("DROP TABLE repuestos")
+            connection.execute("ALTER TABLE repuestos_nuevo RENAME TO repuestos")
+            for statement in dependencies:
+                connection.execute(statement)
+            for _, statement in external_triggers:
+                connection.execute(statement)
+            if connection.execute("PRAGMA foreign_key_check").fetchone():
+                raise ValueError("La migración de estados dejó relaciones inválidas")
+            if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise ValueError("La migración de estados no pasó integrity_check")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
 
 
 def _postgres_url(db_path: str | Path) -> str | None:
@@ -170,10 +228,24 @@ def initialize_database(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 descriptions_need_refresh = True
         migrate_spanish_names(connection, path)
         migrate_management(connection, path)
+    _migrate_free_states(path)
     schema = SCHEMA_PATH.read_text(encoding="utf-8")
     with get_connection(path) as connection:
         connection.executescript(schema)
+        columns = {item[1] for item in connection.execute("PRAGMA table_info(repuestos)")}
+        if "fecha_actualizacion_estado" not in columns:
+            connection.execute("ALTER TABLE repuestos ADD COLUMN fecha_actualizacion_estado TEXT")
+        for name in ("repuestos_estado_inicial", "repuestos_transicion_estado", "repuestos_comercial_cerrado"):
+            connection.execute(f"DROP TRIGGER IF EXISTS {name}")
+        view = connection.execute("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'vista_repuestos'").fetchone()
+        if view and "r.fecha_actualizacion_estado" not in view[0]:
+            connection.execute("DROP VIEW vista_repuestos")
         connection.executescript((BASE_DIR / "schema_gestion.sql").read_text(encoding="utf-8"))
+        connection.execute("""UPDATE repuestos SET fecha_actualizacion_estado = coalesce((
+            SELECT h.fecha_cambio FROM historial_estados h
+            WHERE h.repuesto_id = repuestos.id ORDER BY h.id DESC LIMIT 1
+        ), fecha_actualizacion, CURRENT_TIMESTAMP)
+        WHERE fecha_actualizacion_estado IS NULL""")
         for unit in ("Pieza", "Juego", "Metro"):
             connection.execute("INSERT OR IGNORE INTO unidades_medida (nombre) VALUES (?)", (unit,))
         if descriptions_need_refresh:

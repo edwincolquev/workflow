@@ -6,7 +6,7 @@ Este paquete se ejecuta desde el `app.py` de la raíz de Workflow y comparte su 
 
 En **Catálogo > Hoja de trabajo > Edición masiva con Excel**, descargue la plantilla con los repuestos que coinciden con **Filtrar por MARCA** y **Filtrar por estado**, sin el límite de filas de la pantalla. La hoja visible tiene una fila por repuesto y encabezados simples; la hoja interna `Originales` permite detectar cambios hechos por otra sesión. Edite las filas existentes sin cambiar el ID o agregue filas al final dejando el ID vacío. El código de proveedor es obligatorio y único. Puede vaciar celdas de filas existentes para borrar valores opcionales; quitar una fila del archivo no elimina el repuesto.
 
-Al importar, la aplicación muestra las modificaciones y altas previstas. **Aplicar cambios del Excel** vuelve a validar los datos y guarda todo en una sola transacción; si una fila falla, no se guarda ninguna. Se respetan las transiciones de estado, el cierre comercial En SAP y la pertenencia de categorías a sus marcas. Los usuarios con permiso Lectura pueden descargar, pero no importar.
+Al importar, la aplicación muestra las modificaciones y altas previstas. **Aplicar cambios del Excel** vuelve a validar los datos y guarda todo en una sola transacción; si una fila falla, no se guarda ninguna. El estado se puede cambiar libremente, incluidos los artículos En SAP. Excel permite ajustar sus importes comerciales mediante una función privada de Supabase; la pantalla sigue bloqueando esos importes mientras el artículo está En SAP. La categoría debe pertenecer a la marca. **Fecha cambio de estado** es una columna automática de `repuestos`, inicializada desde el historial y no editable. Los usuarios con permiso Lectura pueden descargar, pero no importar.
 
 # Catalogo inteligente de repuestos
 
@@ -18,7 +18,7 @@ Las etapas, campos de compra y venta y encabezados del maestro se describen en [
 
 ## Supabase/PostgreSQL
 
-El proyecto `catalogo-m7` (`wvsysymabduywfgekyfh`) contiene una copia del catálogo SQLite con las 13 tablas en español. Se aplicaron `supabase/migrations/20261028000000_catalogo_actual.sql` y `supabase/migrations/20261028000001_catalogo_reglas.sql`. El esquema histórico en inglés está archivado en `supabase/archive/` y no debe aplicarse al catálogo actual.
+El proyecto `catalogo-m7` (`wvsysymabduywfgekyfh`) contiene una copia del catálogo SQLite con las 13 tablas en español. Las migraciones actuales están en `supabase/migrations/`; las de estado libre y edición comercial de Excel se aplicaron el 29 de octubre de 2026. El esquema histórico en inglés está archivado en `supabase/archive/` y no debe aplicarse al catálogo actual.
 
 La carga procede del respaldo `data/catalogo.pre_supabase_20261028.sqlite3`. Para comprobar que los datos remotos siguen coincidiendo con él, ejecute `python supabase/import_sqlite.py --verify`. `--apply` solo carga cuando las 13 tablas de destino están vacías. El token temporal se lee de `.env`, excluido de Git; no se guarda en las migraciones.
 

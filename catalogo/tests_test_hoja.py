@@ -73,7 +73,7 @@ def test_invalid_bulk_state_rolls_back_prices_and_history(tmp_path):
     path, rows = _datos(tmp_path)
     changes = {
         rows[0]["id"]: dict(precio_compra=10, estado_gestion="En cotización"),
-        rows[1]["id"]: dict(estado_gestion="Pedido"),
+        rows[1]["id"]: dict(estado_gestion="Estado inexistente"),
     }
     try:
         guardar_cambios_hoja(rows, changes, path)

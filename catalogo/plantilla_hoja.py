@@ -15,7 +15,7 @@ from catalogo.descriptions import refresh_long_description
 from catalogo.gestion import ESTADOS, NUMERICOS, guardar_repuesto, numero_gestion, normalizar_estado
 from catalogo.hoja_trabajo import CAMPOS_EDITABLES, LABELS, _validar_listas, valor_comparable
 
-HEADERS = ("ID", *(LABELS[field] for field in CAMPOS_EDITABLES))
+HEADERS = ("ID", *(LABELS[field] for field in CAMPOS_EDITABLES), "Fecha cambio de estado")
 BASE_SHEET = "Originales"
 DATA_SHEET = "Repuestos"
 
@@ -70,7 +70,9 @@ def plantilla_hoja_bytes(db_path: str | Path = DEFAULT_DB_PATH, *, marca_id=None
     baseline = book.create_sheet(BASE_SHEET)
     baseline.append(HEADERS)
     for part in rows:
-        values = [part["id"], *(_export_value(field, part[field]) for field in CAMPOS_EDITABLES)]
+        state_date = part["fecha_actualizacion_estado"]
+        values = [part["id"], *(_export_value(field, part[field]) for field in CAMPOS_EDITABLES),
+                  str(state_date) if state_date is not None else None]
         sheet.append(values)
         baseline.append(values)
         for target in (sheet, baseline):
@@ -79,10 +81,10 @@ def plantilla_hoja_bytes(db_path: str | Path = DEFAULT_DB_PATH, *, marca_id=None
                     cell.data_type = "s"
     baseline.sheet_state = "hidden"
     sheet.freeze_panes = "C2"
-    sheet.auto_filter.ref = f"A1:N{max(2, sheet.max_row)}"
+    sheet.auto_filter.ref = f"A1:O{max(2, sheet.max_row)}"
     sheet.sheet_view.showGridLines = False
     sheet.row_dimensions[1].height = 30
-    widths = [10, 22, 18, 45, 22, 24, 18, 22, 25, 18, 18, 18, 20, 12]
+    widths = [10, 22, 18, 45, 22, 24, 18, 22, 25, 18, 18, 18, 20, 12, 23]
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
     for cell in sheet[1]:
@@ -91,9 +93,11 @@ def plantilla_hoja_bytes(db_path: str | Path = DEFAULT_DB_PATH, *, marca_id=None
         cell.alignment = Alignment(vertical="center", wrap_text=True)
     sheet["A1"].comment = Comment("No cambie el ID de las filas existentes. Déjelo vacío para agregar un repuesto.", "Catálogo")
     sheet["B1"].comment = Comment("Código obligatorio y único. Las columnas de códigos están formateadas como texto.", "Catálogo")
-    sheet["I1"].comment = Comment("Respete las transiciones de estado. En SAP requiere Código SAP.", "Catálogo")
+    sheet["I1"].comment = Comment("Puede elegir cualquier estado, sin seguir una secuencia.", "Catálogo")
+    sheet["O1"].comment = Comment("Fecha del último cambio de estado. La calcula la aplicación; no la edite.", "Catálogo")
     for row in sheet.iter_rows(min_row=2):
         row[0].font = Font(color="666666")
+        row[-1].font = Font(color="666666")
         for cell in row[1:]:
             cell.fill = PatternFill("solid", fgColor="F1F7FD" if cell.row % 2 == 0 else "FFFFFF")
         for column in (2, 3):
@@ -125,13 +129,16 @@ def _read_template(content: bytes):
     if DATA_SHEET not in book or BASE_SHEET not in book:
         raise ValueError("Use la plantilla descargada desde Hoja de trabajo")
     sheet, baseline = book[DATA_SHEET], book[BASE_SHEET]
-    if tuple(cell.value for cell in sheet[1][:len(HEADERS)]) != HEADERS:
+    headers = tuple(cell.value for cell in sheet[1][:len(HEADERS)])
+    if headers not in (HEADERS, HEADERS[:-1]):
         raise ValueError("Los encabezados de Repuestos fueron modificados")
-    if tuple(cell.value for cell in baseline[1][:len(HEADERS)]) != HEADERS:
+    if tuple(cell.value for cell in baseline[1][:len(HEADERS)]) != headers:
         raise ValueError("La referencia interna de la plantilla fue modificada")
+    has_state_date = headers == HEADERS
 
     originals = {}
-    for row in baseline.iter_rows(min_row=2, max_col=len(HEADERS), values_only=True):
+    original_dates = {}
+    for row in baseline.iter_rows(min_row=2, max_col=len(headers), values_only=True):
         if row[0] is None:
             continue
         part_id = _id(row[0])
@@ -139,9 +146,11 @@ def _read_template(content: bytes):
             raise ValueError(f"ID {part_id} repetido en la referencia interna")
         originals[part_id] = {field: _plain(field, row[index + 1])
                               for index, field in enumerate(CAMPOS_EDITABLES)}
+        if has_state_date:
+            original_dates[part_id] = row[-1]
 
     seen_ids, seen_codes, updates, inserts = set(), set(), [], []
-    for number, cells in enumerate(sheet.iter_rows(min_row=2, max_col=len(HEADERS)), 2):
+    for number, cells in enumerate(sheet.iter_rows(min_row=2, max_col=len(headers)), 2):
         row = tuple(cell.value for cell in cells)
         if not any(value is not None and value != "" for value in row):
             continue
@@ -158,12 +167,16 @@ def _read_template(content: bytes):
                 raise ValueError(f"Código proveedor {code} repetido en el archivo")
             seen_codes.add(code_key)
             if part_id is None:
+                if has_state_date and row[-1] is not None:
+                    raise ValueError("Fecha cambio de estado debe quedar vacía en repuestos nuevos")
                 inserts.append((number, data))
             else:
                 if part_id not in originals:
                     raise ValueError(f"ID {part_id} no pertenece a esta plantilla")
                 if part_id in seen_ids:
                     raise ValueError(f"ID {part_id} repetido")
+                if has_state_date and row[-1] != original_dates[part_id]:
+                    raise ValueError("Fecha cambio de estado es automática y no se puede editar")
                 seen_ids.add(part_id)
                 fields = {field: value for field, value in data.items()
                           if valor_comparable(field, value) != valor_comparable(field, originals[part_id][field])}
@@ -171,7 +184,7 @@ def _read_template(content: bytes):
                     updates.append((number, part_id, fields, code))
         except ValueError as error:
             raise ValueError(f"Fila {number}: {error}") from error
-    return originals, updates, inserts
+    return originals, original_dates, updates, inserts
 
 
 def _id(value):
@@ -182,13 +195,34 @@ def _id(value):
 
 def revisar_plantilla_hoja(content: bytes):
     """Devuelve solo las filas que se guardarán; no toca la base."""
-    _, updates, inserts = _read_template(content)
+    _, _, updates, inserts = _read_template(content)
     return updates, inserts
+
+
+def _guardar_fila_excel(connection, part_id, current, fields):
+    """Aísla la edición comercial En SAP en la función privada de Postgres."""
+    if not (hasattr(connection, "raw") and current["estado_gestion"] == "en_sap"
+            and set(fields) & set(NUMERICOS)):
+        return guardar_repuesto(connection, fields, part_id, permitir_comercial_excel=True)[1]
+    commercial = {field: fields[field] for field in NUMERICOS if field in fields}
+    other = {field: value for field, value in fields.items() if field not in NUMERICOS}
+    if other:
+        guardar_repuesto(connection, other, part_id)
+    latest = connection.execute(
+        "SELECT minimo_compra, precio_compra, precio_venta, cantidad_compra FROM repuestos WHERE id = ?",
+        (part_id,),
+    ).fetchone()
+    values = [commercial.get(field, latest[field]) for field in NUMERICOS]
+    connection.execute(
+        "SELECT catalogo_privado.actualizar_comercial_excel(?, ?, ?, ?, ?)",
+        (part_id, *values),
+    )
+    return True
 
 
 def importar_plantilla_hoja(content: bytes, db_path: str | Path = DEFAULT_DB_PATH):
     """Revalida el archivo y aplica todas las altas y ediciones en una transacción."""
-    originals, updates, inserts = _read_template(content)
+    originals, original_dates, updates, inserts = _read_template(content)
     with get_connection(db_path) as connection:
         connection.execute("BEGIN IMMEDIATE")
         for number, part_id, fields, _code in updates:
@@ -201,8 +235,10 @@ def importar_plantilla_hoja(content: bytes, db_path: str | Path = DEFAULT_DB_PAT
                 if any(valor_comparable(field, current[field]) != valor_comparable(field, originals[part_id][field])
                        for field in CAMPOS_EDITABLES):
                     raise ValueError("el repuesto cambió desde la descarga; descargue una plantilla nueva")
+                if part_id in original_dates and str(current["fecha_actualizacion_estado"]) != original_dates[part_id]:
+                    raise ValueError("el estado cambió desde la descarga; descargue una plantilla nueva")
                 _validar_listas(connection, current, fields)
-                _, changed = guardar_repuesto(connection, fields, part_id)
+                changed = _guardar_fila_excel(connection, part_id, current, fields)
                 if changed and set(fields) & {"descripcion", "medida"}:
                     refresh_long_description(connection, part_id)
             except Exception as error:
@@ -217,7 +253,7 @@ def importar_plantilla_hoja(content: bytes, db_path: str | Path = DEFAULT_DB_PAT
                     raise ValueError(f"Código proveedor {code} ya existe (ID {exists[0]})")
                 if data["activo"] is None:
                     data["activo"] = True
-                created_id, _ = guardar_repuesto(connection, data)
+                created_id, _ = guardar_repuesto(connection, data, permitir_comercial_excel=True)
                 refresh_long_description(connection, created_id)
             except Exception as error:
                 raise ValueError(f"Fila {number}: {error}") from error

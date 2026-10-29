@@ -121,12 +121,12 @@ def migrate_management(connection: sqlite3.Connection, path: Path) -> Path | Non
             "marca_id": "INTEGER REFERENCES marcas_repuestos(id) ON DELETE RESTRICT",
             "categoria_id": "INTEGER REFERENCES categorias_repuestos(id) ON DELETE RESTRICT",
             "estado_gestion": """TEXT NOT NULL DEFAULT 'propuesto'
-                CHECK (estado_gestion IN ('propuesto', 'en_cotizacion', 'pendiente_aprobacion', 'aprobado', 'rechazado', 'pedido', 'en_sap'))
-                CHECK (estado_gestion <> 'en_sap' OR trim(coalesce(codigo_sap, '')) <> '')""",
+                CHECK (estado_gestion IN ('propuesto', 'en_cotizacion', 'pendiente_aprobacion', 'aprobado', 'rechazado', 'pedido', 'en_sap'))""",
             "minimo_compra": "REAL CHECK (minimo_compra IS NULL OR minimo_compra > 0)",
             "precio_compra": "REAL CHECK (precio_compra IS NULL OR precio_compra >= 0)",
             "precio_venta": "REAL CHECK (precio_venta IS NULL OR precio_venta >= 0)",
             "cantidad_compra": "REAL CHECK (cantidad_compra IS NULL OR cantidad_compra >= 0)",
+            "fecha_actualizacion_estado": "TEXT",
         }
         for name, definition in additions.items():
             connection.execute(f"ALTER TABLE repuestos ADD COLUMN {name} {definition}")

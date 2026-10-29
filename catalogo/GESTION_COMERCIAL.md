@@ -6,25 +6,11 @@ Los precios de compra y venta son unitarios y se registran en **dólares estadou
 
 ## Flujo de trabajo
 
-```mermaid
-flowchart LR
-    P[Propuesto] --> C[En cotización]
-    C --> E[Pendiente de aprobación]
-    E --> A[Aprobado]
-    A --> D[Pedido]
-    D --> S[En SAP]
-    P --> R[Rechazado]
-    C --> R
-    E --> R
-    A --> R
-    D --> R
-```
+El operador puede seleccionar cualquier estado en cualquier momento, incluso retroceder desde En SAP o Rechazado. El Código SAP es opcional. Los estados son Propuesto, En cotización, Pendiente de aprobación, Aprobado, Pedido, En SAP y Rechazado.
 
-Los cambios se realizan en orden. Rechazado y En SAP son estados finales. Para pasar a En SAP se requiere `codigo_sap`; desde ese momento quedan cerrados los cambios de estado, mínimo de compra, precios y cantidad de compra. La información técnica y su clasificación siguen disponibles en el catálogo.
+En la pantalla, los importes y cantidades comerciales de un artículo En SAP permanecen bloqueados hasta cambiarlo a otro estado. La plantilla Excel puede modificarlos directamente mediante una función privada de Supabase, mientras el trigger continúa bloqueando actualizaciones SQL ordinarias. Si una importación nueva no informa estado, se usa En SAP cuando tiene Código SAP; de lo contrario, Propuesto. Un estado vacío en un repuesto existente conserva su estado actual.
 
-Cada repuesto nuevo inicia en Propuesto. Si se registra un artículo que ya existe en SAP, puede iniciarse en En SAP con su código. En una importación nueva con código SAP y estado vacío se usa En SAP. Un estado vacío en un repuesto existente conserva su estado actual.
-
-`historial_estados` registra el estado inicial y cada cambio con su fecha. Repetir un mismo estado no duplica el historial. Los estados se registran manualmente por el operador; esta fase no incluye usuarios aprobadores, permisos por rol ni envío de solicitudes al proveedor.
+`historial_estados` registra el estado inicial y cada cambio con su fecha. Repetir un mismo estado no duplica el historial. `repuestos.fecha_actualizacion_estado` guarda la fecha del último cambio y se actualiza automáticamente; la vista y el Excel la muestran sin permitir editarla. Los estados se registran por el operador.
 
 ## Campos para el maestro
 
@@ -44,15 +30,15 @@ En la pestaña Importar se puede descargar una plantilla de dos encabezados con 
 
 En el CSV se aceptan punto o coma decimal, sin separadores de miles. Las celdas vacías conservan el valor existente; cero es un valor informado. Las listas de unidades, marcas y categorías se reutilizan por nombre, ignorando mayúsculas y espacios externos. Las categorías se reutilizan dentro de su marca. Al cambiar la marca del repuesto, se retira la categoría anterior para que pueda elegirse una de la nueva marca.
 
-Los errores numéricos o estados desconocidos aparecen durante la preparación. Las transiciones incompatibles con el estado actual se comprueban al confirmar; si alguna falla, se revierte toda la confirmación del lote.
+Los errores numéricos o estados desconocidos aparecen durante la preparación. Si alguna fila falla al confirmar, se revierte toda la confirmación del lote.
 
 ## Uso en Streamlit
 
 1. En Clasificación, crear o editar unidades, marcas comerciales y categorías. Un valor en uso no puede eliminarse.
 2. Crear el repuesto con sus datos técnicos, clasificación y datos comerciales disponibles.
-3. Abrir el repuesto y usar Guardar clasificación y gestión para completar cantidades, precios y avanzar de estado.
+3. Abrir el repuesto y usar Guardar clasificación y gestión para completar cantidades, precios y elegir el estado.
 4. Consultar Historial de estados y filtrar el catálogo por etapa.
-5. Informar el código SAP en los datos del repuesto antes de cerrar el seguimiento en En SAP.
+5. Usar la plantilla Excel para corregir importes comerciales de artículos En SAP cuando corresponda.
 
 ## Migración
 

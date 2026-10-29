@@ -4,7 +4,7 @@ import streamlit as st
 from permissions import can_write
 
 from catalogo.database import fetch_all, get_connection
-from catalogo.gestion import ESTADOS, NUMERICOS, TRANSICIONES, guardar_repuesto
+from catalogo.gestion import ESTADOS, NUMERICOS, guardar_repuesto
 
 
 def campos_clasificacion(prefix, current=None):
@@ -37,8 +37,10 @@ def campos_clasificacion(prefix, current=None):
 def campos_comerciales(current=None):
     read_only = not can_write(st.session_state.get("user"))
     closed = bool(current and current["estado_gestion"] == "en_sap")
-    states = [current["estado_gestion"], *TRANSICIONES[current["estado_gestion"]]] if current else ["propuesto", "en_sap"]
-    state = st.selectbox("Estado de gestión", states, format_func=ESTADOS.get, disabled=closed or read_only)
+    states = list(ESTADOS)
+    state = st.selectbox("Estado de gestión", states,
+                         index=states.index(current["estado_gestion"]) if current else 0,
+                         format_func=ESTADOS.get, disabled=read_only)
     st.caption("Precios unitarios en dólares estadounidenses (USD). Cantidades expresadas en la unidad del repuesto.")
     labels = ("Mínimo de compra", "Precio de compra (USD)", "Precio de venta (USD)", "Cantidad de compra")
     data = {"estado_gestion": state}

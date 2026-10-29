@@ -3,7 +3,7 @@ import sqlite3
 
 import pandas as pd
 
-from catalogo.database import get_connection, initialize_database
+from catalogo.database import SCHEMA_PATH, get_connection, initialize_database
 from catalogo.gestion import guardar_repuesto
 from catalogo.importer import confirm_batch, stage_dataframe
 from catalogo.tests_test_migration import _legacy_database
@@ -72,33 +72,27 @@ def test_category_must_belong_to_brand(tmp_path):
         assert connection.execute("SELECT count(*) FROM categorias_repuestos").fetchone()[0] == 2
 
 
-def test_workflow_records_history_and_closes_at_sap(tmp_path):
+def test_free_states_record_history_and_screen_closes_commercial_at_sap(tmp_path):
     path = tmp_path / "catalogo.sqlite3"
     initialize_database(path)
     with get_connection(path) as connection:
         part_id, _ = guardar_repuesto(connection, dict(codigo_proveedor="A", precio_compra="12.5"))
-    try:
-        with get_connection(path) as connection:
-            guardar_repuesto(connection, dict(estado_gestion="Aprobado"), part_id)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("Se omitieron etapas del proceso")
-    for state in ("En cotización", "Pendiente de aprobación", "Aprobado", "Pedido"):
-        with get_connection(path) as connection:
-            guardar_repuesto(connection, dict(estado_gestion=state), part_id)
-    try:
-        with get_connection(path) as connection:
-            guardar_repuesto(connection, dict(estado_gestion="En SAP"), part_id)
-    except ValueError as error:
-        assert "código SAP" in str(error)
-    else:
-        raise AssertionError("Se permitió cerrar sin código SAP")
     with get_connection(path) as connection:
-        guardar_repuesto(connection, dict(estado_gestion="En SAP", codigo_sap="SAP-01"), part_id)
+        guardar_repuesto(connection, dict(estado_gestion="Aprobado"), part_id)
+        guardar_repuesto(connection, dict(estado_gestion="En SAP"), part_id)
         assert guardar_repuesto(connection, dict(estado_gestion="En SAP"), part_id) == (part_id, False)
-        assert connection.execute("SELECT count(*) FROM historial_estados").fetchone()[0] == 6
+        assert connection.execute("SELECT count(*) FROM historial_estados").fetchone()[0] == 3
+        last = connection.execute("SELECT fecha_cambio FROM historial_estados WHERE repuesto_id = ? ORDER BY id DESC LIMIT 1",
+                                  (part_id,)).fetchone()[0]
+        assert connection.execute("SELECT fecha_actualizacion_estado FROM vista_repuestos WHERE id = ?",
+                                  (part_id,)).fetchone()[0] == last
         guardar_repuesto(connection, dict(descripcion="Descripción técnica actualizada"), part_id)
+        assert connection.execute("SELECT fecha_actualizacion_estado FROM repuestos WHERE id = ?",
+                                  (part_id,)).fetchone()[0] == last
+    with get_connection(path) as connection:
+        guardar_repuesto(connection, dict(estado_gestion="Propuesto"), part_id)
+        assert connection.execute("SELECT count(*) FROM historial_estados").fetchone()[0] == 4
+        guardar_repuesto(connection, dict(estado_gestion="En SAP"), part_id)
     try:
         with get_connection(path) as connection:
             guardar_repuesto(connection, dict(precio_compra="20"), part_id)
@@ -108,7 +102,7 @@ def test_workflow_records_history_and_closes_at_sap(tmp_path):
         raise AssertionError("Se modificó la gestión comercial cerrada")
 
 
-def test_failed_workflow_import_rolls_back_whole_batch(tmp_path):
+def test_master_import_accepts_arbitrary_states(tmp_path):
     path = tmp_path / "catalogo.sqlite3"
     initialize_database(path)
     with get_connection(path) as connection:
@@ -117,13 +111,31 @@ def test_failed_workflow_import_rolls_back_whole_batch(tmp_path):
     data = pd.DataFrame([{"codigo_proveedor": "A", "estado_gestion": "En cotización"},
                          {"codigo_proveedor": "B", "estado_gestion": "Pedido"}])
     batch = stage_dataframe(data, "estados.csv", db_path=path)
-    try:
-        confirm_batch(batch, db_path=path)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("El lote debía rechazarse por una transición inválida")
+    assert confirm_batch(batch, db_path=path) == (0, 2)
     with get_connection(path) as connection:
-        assert connection.execute("SELECT count(*) FROM historial_estados").fetchone()[0] == 2
-        assert connection.execute("SELECT count(*) FROM repuestos WHERE estado_gestion = 'propuesto'").fetchone()[0] == 2
-        assert connection.execute("SELECT estado FROM lotes_importacion WHERE id = ?", (batch,)).fetchone()[0] == "staged"
+        assert connection.execute("SELECT count(*) FROM historial_estados").fetchone()[0] == 4
+        assert [row[0] for row in connection.execute("SELECT estado_gestion FROM repuestos ORDER BY codigo_proveedor")] == [
+            "en_cotizacion", "pedido"]
+        assert connection.execute("SELECT estado FROM lotes_importacion WHERE id = ?", (batch,)).fetchone()[0] == "confirmed"
+
+
+def test_old_sqlite_sap_check_migrates_without_losing_relations(tmp_path):
+    path = tmp_path / "catalogo.sqlite3"
+    schema = SCHEMA_PATH.read_text(encoding="utf-8").replace(
+        "CHECK (estado_gestion IN ('propuesto', 'en_cotizacion', 'pendiente_aprobacion', 'aprobado', 'rechazado', 'pedido', 'en_sap'))",
+        "CHECK (estado_gestion IN ('propuesto', 'en_cotizacion', 'pendiente_aprobacion', 'aprobado', 'rechazado', 'pedido', 'en_sap')) "
+        "CHECK (estado_gestion <> 'en_sap' OR trim(coalesce(codigo_sap, '')) <> '')",
+    )
+    assert "CHECK (estado_gestion <> 'en_sap'" in schema
+    with closing(sqlite3.connect(path)) as connection:
+        connection.executescript(schema)
+        connection.executescript(SCHEMA_PATH.with_name("schema_gestion.sql").read_text(encoding="utf-8"))
+        connection.execute("INSERT INTO repuestos (id, codigo_proveedor) VALUES (7, 'ANTIGUO')")
+        connection.execute("INSERT INTO codigos_oem (repuesto_id, codigo_oem) VALUES (7, 'OEM-7')")
+        connection.commit()
+    initialize_database(path)
+    with get_connection(path) as connection:
+        guardar_repuesto(connection, {"estado_gestion": "En SAP"}, 7)
+        assert connection.execute("SELECT codigo_oem FROM codigos_oem WHERE repuesto_id = 7").fetchone()[0] == "OEM-7"
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute("SELECT fecha_actualizacion_estado FROM vista_repuestos WHERE id = 7").fetchone()[0]

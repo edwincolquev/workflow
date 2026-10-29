@@ -23,6 +23,7 @@ erDiagram
         INTEGER activo
         TEXT fecha_creacion
         TEXT fecha_actualizacion
+        TEXT fecha_actualizacion_estado
     }
     codigos_oem {
         INTEGER id PK

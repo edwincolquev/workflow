@@ -78,6 +78,8 @@ def mostrar_hoja(rows, scope, total):
                  "aunque la hoja muestre menos filas. Edite las celdas y agregue filas al final con el ID vacío. "
                  "Mantenga los encabezados y los códigos como texto para conservar ceros iniciales. "
                  "Las filas omitidas no se eliminan; las filas sin cambios no se guardan.")
+        st.caption("El estado puede cambiar libremente. 'Fecha cambio de estado' se actualiza automáticamente. "
+                   "Los importes En SAP se pueden editar aquí, pero siguen bloqueados en pantalla.")
         export_scope = scope[:2]
         if st.button("Preparar plantilla Excel", key="hoja_preparar_excel"):
             st.session_state["hoja_plantilla_excel"] = {
@@ -148,24 +150,25 @@ def mostrar_hoja(rows, scope, total):
     config["activo"] = st.column_config.CheckboxColumn("Activo")
     config["estado_gestion"] = st.column_config.SelectboxColumn("Estado", options=list(ESTADOS.values()), required=True, width="medium")
     config["fecha_actualizacion"] = st.column_config.TextColumn("Actualizado", disabled=True)
+    config["fecha_actualizacion_estado"] = st.column_config.TextColumn("Fecha cambio de estado", disabled=True)
     for field in NUMERICOS:
         config[field] = st.column_config.NumberColumn(LABELS[field], min_value=0.0001 if field == "minimo_compra" else 0.0, format="%.4f")
     for field, table in (("unidad", "unidades_medida"), ("nombre_marca", "marcas_repuestos"), ("categoria", "categorias_repuestos")):
         options = {row["nombre"] for row in fetch_all(f"SELECT nombre FROM {table}")}
         options.update(row[field] for row in state["borrador"] if row[field])
         config[field] = st.column_config.SelectboxColumn(LABELS[field], options=sorted(options), width="medium")
-    disabled = ["id", "fecha_actualizacion", "_index"]
+    disabled = ["id", "fecha_actualizacion", "fecha_actualizacion_estado", "_index"]
     if read_only:
         disabled.extend(CAMPOS_EDITABLES)
     if all(row["estado_gestion"] == "en_sap" for row in state["originales"]):
-        disabled += ["estado_gestion", *NUMERICOS]
+        disabled += list(NUMERICOS)
     st.data_editor(data, hide_index=True, width="stretch", height=min(580, 38 + 35 * len(data)),
                    num_rows="fixed", column_config=config, disabled=disabled, key=state["editor_key"],
                    on_change=_al_editar, args=(state["editor_key"],))
     st.caption(f"{selected_count} filas seleccionadas. Edite una celda de una fila marcada para copiar su valor a las demás marcadas. Los códigos proveedor y SAP se editan individualmente.")
     for notice in state["avisos"]:
         st.warning(notice)
-    st.caption("Las categorías deben pertenecer a la marca de cada fila. Al cambiar la marca se limpia su categoría. Los artículos En SAP tienen cerrados sus precios, cantidades y estado.")
+    st.caption("Las categorías deben pertenecer a la marca de cada fila. Al cambiar la marca se limpia su categoría. El estado puede cambiar libremente; los importes En SAP se corrigen mediante Excel.")
     changes = cambios_hoja(state["originales"], state["borrador"])
     st.caption(f"{len(changes)} repuestos con cambios pendientes. Guarde o descarte para volver a cambiar los filtros.")
     if changes:

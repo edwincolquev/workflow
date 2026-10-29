@@ -79,11 +79,22 @@ def test_excel_conflict_cancels_entire_import(tmp_path):
         assert connection.execute("SELECT descripcion FROM repuestos WHERE id = 1").fetchone()[0] == "Desde otra sesión"
 
 
+def test_excel_detects_state_history_change_after_download(tmp_path):
+    path = _catalogo(tmp_path)
+    content = _edit(plantilla_hoja_bytes(path), lambda sheet: setattr(sheet["D2"], "value", "Desde Excel"))
+    with get_connection(path) as connection:
+        connection.execute("UPDATE repuestos SET fecha_actualizacion_estado = '2099-01-01 00:00:00' WHERE id = 1")
+    with raises("estado cambió"):
+        importar_plantilla_hoja(content, path)
+    with get_connection(path) as connection:
+        assert connection.execute("SELECT descripcion FROM repuestos WHERE id = 1").fetchone()[0] == "Original"
+
+
 def test_excel_invalid_row_rolls_back_previous_updates(tmp_path):
     path = _catalogo(tmp_path)
     def edit(sheet):
         sheet["D2"] = "No guardar"
-        sheet["I3"] = "En SAP"  # Sigue requiriendo Código SAP.
+        sheet["J3"] = -1
     content = _edit(plantilla_hoja_bytes(path), edit)
     with raises("Fila 3"):
         importar_plantilla_hoja(content, path)
@@ -116,3 +127,34 @@ def test_excel_export_respects_brand_and_state_filters(tmp_path):
     assert codes(plantilla_hoja_bytes(path, estado="en_cotizacion")) == ["003"]
     assert codes(plantilla_hoja_bytes(path, marca_id=brand_id, estado="propuesto")) == []
     assert codes(plantilla_hoja_bytes(path, marca_id=-1, estado="propuesto")) == ["001", "002"]
+
+
+def test_excel_changes_sap_values_and_status_without_sequence(tmp_path):
+    path = _catalogo(tmp_path)
+    with get_connection(path) as connection:
+        sap_id, _ = guardar_repuesto(connection, {"codigo_proveedor": "SAP", "estado_gestion": "En SAP",
+                                                "precio_compra": 5})
+        with raises("cerrado"):
+            guardar_repuesto(connection, {"precio_compra": 10}, sap_id)
+
+    def edit(sheet):
+        sheet["I2"] = "Aprobado"
+        sheet["I4"] = "Pedido"
+        sheet["K4"] = 10
+        sheet.append([None, "NUEVO", None, "Desde Excel", None, None, None, None, "Rechazado"])
+
+    content = _edit(plantilla_hoja_bytes(path), edit)
+    assert importar_plantilla_hoja(content, path) == (2, 1)
+    with get_connection(path) as connection:
+        rows = connection.execute("SELECT codigo_proveedor, estado_gestion, precio_compra "
+                                  "FROM repuestos ORDER BY id").fetchall()
+        history = connection.execute("SELECT estado_anterior, estado_nuevo, fecha_cambio "
+                                     "FROM historial_estados WHERE repuesto_id = ? ORDER BY id", (sap_id,)).fetchall()
+        date = connection.execute("SELECT fecha_actualizacion_estado FROM vista_repuestos WHERE id = ?",
+                                  (sap_id,)).fetchone()[0]
+    assert [(row[0], row[1], row[2]) for row in rows] == [
+        ("001", "aprobado", 2), ("002", "propuesto", None),
+        ("SAP", "pedido", 10), ("NUEVO", "rechazado", None),
+    ]
+    assert [(row[0], row[1]) for row in history] == [(None, "en_sap"), ("en_sap", "pedido")]
+    assert date == history[-1][2]

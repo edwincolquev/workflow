@@ -32,7 +32,8 @@ Esquema SQLite en español desde el 24 de octubre de 2026. Incluye trece tablas 
 | `brand_name` / `nombre_marca` | `marca_id` | INTEGER | `marcas_repuestos.id`; nombre disponible en `vista_repuestos.nombre_marca`. |
 | Nuevo | `unidad_id` | INTEGER | `unidades_medida.id` |
 | Nuevo | `categoria_id` | INTEGER | `categorias_repuestos.id`; debe corresponder a `marca_id`. |
-| Nuevo | `estado_gestion` | TEXT | Etapa comercial, desde `propuesto` hasta `en_sap` o `rechazado`. |
+| Nuevo | `estado_gestion` | TEXT | Estado comercial elegido libremente entre los valores admitidos. |
+| Nuevo | `fecha_actualizacion_estado` | TIMESTAMPTZ / TEXT | Fecha del último cambio de estado; se actualiza automáticamente. |
 | Nuevo | `minimo_compra` | REAL | Cantidad mínima mayor que cero, opcional. |
 | Nuevo | `precio_compra` | REAL | Precio unitario en USD, opcional y no negativo. |
 | Nuevo | `precio_venta` | REAL | Precio unitario en USD, opcional y no negativo. |
@@ -137,7 +138,7 @@ Esquema SQLite en español desde el 24 de octubre de 2026. Incluye trece tablas 
 | `categorias_repuestos` | `id`, `marca_id`, `nombre` | `marca_id` apunta a `marcas_repuestos.id`; nombre único dentro de esa marca. |
 | `historial_estados` | `id`, `repuesto_id`, `estado_anterior`, `estado_nuevo`, `fecha_cambio` | `repuesto_id` apunta a `repuestos.id`. El primer registro no tiene estado anterior. |
 
-`vista_repuestos` reúne los campos del repuesto y los nombres `unidad`, `nombre_marca` y `categoria`. Es una vista de consulta; los cambios se guardan en las tablas correspondientes. Consulte [GESTION_COMERCIAL.md](GESTION_COMERCIAL.md) para las etapas, el cierre en SAP y la plantilla de importación.
+`vista_repuestos` reúne los campos del repuesto y los nombres `unidad`, `nombre_marca` y `categoria`. También expone `fecha_actualizacion_estado` de `repuestos`; su valor inicial se tomó del último registro de `historial_estados`. Es una vista de consulta; los cambios se guardan en las tablas correspondientes. Consulte [GESTION_COMERCIAL.md](GESTION_COMERCIAL.md) para los estados y la plantilla de importación.
 
 ## Importación y conservación de datos
 

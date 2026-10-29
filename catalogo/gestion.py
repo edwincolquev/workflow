@@ -14,15 +14,6 @@ ESTADOS = {
     "pedido": "Pedido",
     "en_sap": "En SAP",
 }
-TRANSICIONES = {
-    "propuesto": ("en_cotizacion", "rechazado"),
-    "en_cotizacion": ("pendiente_aprobacion", "rechazado"),
-    "pendiente_aprobacion": ("aprobado", "rechazado"),
-    "aprobado": ("pedido", "rechazado"),
-    "pedido": ("en_sap", "rechazado"),
-    "rechazado": (),
-    "en_sap": (),
-}
 NUMERICOS = ("minimo_compra", "precio_compra", "precio_venta", "cantidad_compra")
 CAMPOS_GESTION = ("unidad", "nombre_marca", "categoria", "estado_gestion", *NUMERICOS)
 
@@ -85,7 +76,8 @@ def _catalogo_id(connection, table, nombre, marca_id=None):
     return connection.execute(f"INSERT INTO {table} (nombre) VALUES (?)", params).lastrowid
 
 
-def guardar_repuesto(connection: sqlite3.Connection, data: dict, repuesto_id=None, *, parcial=False):
+def guardar_repuesto(connection: sqlite3.Connection, data: dict, repuesto_id=None, *, parcial=False,
+                    permitir_comercial_excel=False):
     """Guarda datos informados; parcial=True conserva las celdas vacías del CSV.
 
     Debe llamarse dentro de la transacción de la operación (formulario o lote).
@@ -126,17 +118,11 @@ def guardar_repuesto(connection: sqlite3.Connection, data: dict, repuesto_id=Non
     state = normalizar_estado(data["estado_gestion"]) if data.get("estado_gestion") else (
         current["estado_gestion"] if current else ("en_sap" if codigo_sap else "propuesto")
     )
-    if state == "en_sap" and not codigo_sap:
-        raise ValueError("Para pasar a En SAP debe informar el código SAP")
     if current:
-        if state != current["estado_gestion"] and state not in TRANSICIONES[current["estado_gestion"]]:
-            raise ValueError(f"No se puede pasar de {ESTADOS[current['estado_gestion']]} a {ESTADOS[state]}")
-        if current["estado_gestion"] == "en_sap" and any(
+        if not permitir_comercial_excel and current["estado_gestion"] == "en_sap" and any(
             field in values and values[field] != current[field] for field in NUMERICOS
         ):
             raise ValueError("El seguimiento comercial está cerrado porque el repuesto está en SAP")
-    elif state not in ("propuesto", "en_sap"):
-        raise ValueError("Un repuesto nuevo inicia en Propuesto; los que ya tienen código SAP pueden iniciar en En SAP")
     values["estado_gestion"] = state
     if current:
         changes = {field: value for field, value in values.items() if value != current[field]}

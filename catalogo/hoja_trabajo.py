@@ -40,7 +40,8 @@ def filas_para_editor(rows, selected=()):
         field: ESTADOS[row[field]] if field == "estado_gestion" else (
             bool(row[field]) if field == "activo" else row[field]
         ) for field in CAMPOS_EDITABLES
-    }, fecha_actualizacion=row["fecha_actualizacion"]) for row in rows]
+    }, fecha_actualizacion=row["fecha_actualizacion"],
+        fecha_actualizacion_estado=row["fecha_actualizacion_estado"]) for row in rows]
 
 
 def cambios_hoja(originales, editadas):

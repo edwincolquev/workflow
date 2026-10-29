@@ -32,7 +32,8 @@ SELECT r.id, r.codigo_proveedor, r.codigo_sap, r.descripcion, r.medida,
        r.descripcion_larga, r.activo, r.fecha_creacion, r.fecha_actualizacion,
        r.unidad_id, r.marca_id, r.categoria_id, r.estado_gestion,
        r.minimo_compra, r.precio_compra, r.precio_venta, r.cantidad_compra,
-       u.nombre AS unidad, m.nombre AS nombre_marca, c.nombre AS categoria
+       u.nombre AS unidad, m.nombre AS nombre_marca, c.nombre AS categoria,
+       r.fecha_actualizacion_estado
 FROM repuestos r
 LEFT JOIN unidades_medida u ON u.id = r.unidad_id
 LEFT JOIN marcas_repuestos m ON m.id = r.marca_id
@@ -63,40 +64,16 @@ BEGIN
     SELECT RAISE(ABORT, 'No puede cambiarse la marca de una categoria en uso');
 END;
 
-CREATE TRIGGER IF NOT EXISTS repuestos_estado_inicial
-BEFORE INSERT ON repuestos
-WHEN NEW.estado_gestion NOT IN ('propuesto', 'en_sap')
-BEGIN
-    SELECT RAISE(ABORT, 'El estado inicial debe ser Propuesto o En SAP');
-END;
-
-CREATE TRIGGER IF NOT EXISTS repuestos_transicion_estado
-BEFORE UPDATE OF estado_gestion ON repuestos
-WHEN NEW.estado_gestion <> OLD.estado_gestion AND NOT (
-    (OLD.estado_gestion = 'propuesto' AND NEW.estado_gestion IN ('en_cotizacion', 'rechazado')) OR
-    (OLD.estado_gestion = 'en_cotizacion' AND NEW.estado_gestion IN ('pendiente_aprobacion', 'rechazado')) OR
-    (OLD.estado_gestion = 'pendiente_aprobacion' AND NEW.estado_gestion IN ('aprobado', 'rechazado')) OR
-    (OLD.estado_gestion = 'aprobado' AND NEW.estado_gestion IN ('pedido', 'rechazado')) OR
-    (OLD.estado_gestion = 'pedido' AND NEW.estado_gestion IN ('en_sap', 'rechazado'))
-)
-BEGIN
-    SELECT RAISE(ABORT, 'Transicion de estado no permitida');
-END;
-
-CREATE TRIGGER IF NOT EXISTS repuestos_comercial_cerrado
-BEFORE UPDATE OF minimo_compra, precio_compra, precio_venta, cantidad_compra ON repuestos
-WHEN OLD.estado_gestion = 'en_sap' AND (
-    NEW.minimo_compra IS NOT OLD.minimo_compra OR NEW.precio_compra IS NOT OLD.precio_compra OR
-    NEW.precio_venta IS NOT OLD.precio_venta OR NEW.cantidad_compra IS NOT OLD.cantidad_compra
-)
-BEGIN
-    SELECT RAISE(ABORT, 'El seguimiento comercial esta cerrado en SAP');
-END;
-
 CREATE TRIGGER IF NOT EXISTS repuestos_historial_inicial
 AFTER INSERT ON repuestos
 BEGIN
     INSERT INTO historial_estados (repuesto_id, estado_nuevo) VALUES (NEW.id, NEW.estado_gestion);
+END;
+
+CREATE TRIGGER IF NOT EXISTS repuestos_fecha_estado_inicial
+AFTER INSERT ON repuestos
+BEGIN
+    UPDATE repuestos SET fecha_actualizacion_estado = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS repuestos_historial_cambio
@@ -105,4 +82,11 @@ WHEN NEW.estado_gestion <> OLD.estado_gestion
 BEGIN
     INSERT INTO historial_estados (repuesto_id, estado_anterior, estado_nuevo)
     VALUES (NEW.id, OLD.estado_gestion, NEW.estado_gestion);
+END;
+
+CREATE TRIGGER IF NOT EXISTS repuestos_fecha_estado_cambio
+AFTER UPDATE OF estado_gestion ON repuestos
+WHEN NEW.estado_gestion <> OLD.estado_gestion
+BEGIN
+    UPDATE repuestos SET fecha_actualizacion_estado = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;

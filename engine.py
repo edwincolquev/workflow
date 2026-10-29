@@ -175,7 +175,8 @@ class WorkflowEngine:
         ).all()
 
         # Filter transitions by user's roles matching the source node's role
-        user_role_ids = [role.id for role in user.roles]
+        from permissions import effective_role_ids
+        user_role_ids = effective_role_ids(db, user)
         available = []
         for t in transitions:
             if not t.source_node.role_id or t.source_node.role_id in user_role_ids:
@@ -213,7 +214,8 @@ class WorkflowEngine:
             
         source_node = transition.source_node
         if source_node.role_id:
-            user_role_ids = [role.id for role in user.roles]
+            from permissions import effective_role_ids
+            user_role_ids = effective_role_ids(db, user)
             if source_node.role_id not in user_role_ids:
                 raise ValueError("El usuario no tiene el rol requerido para esta acción.")
 

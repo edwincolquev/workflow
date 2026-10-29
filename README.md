@@ -20,14 +20,14 @@ CATALOGO_DATABASE_URL = "postgresql://..." # Catálogo
 
 ## Acceso y mantenimiento
 
-La cuenta, los roles y el permiso general se gestionan desde **Workflow → Admin → Usuarios y Roles**. Los roles de Workflow determinan las secciones y tareas visibles; el permiso general se aplica tanto a Workflow como a Catálogo:
+La cuenta, los roles de proceso y el permiso general se gestionan desde **Administración → Admin → Usuarios y Roles**. Los roles de proceso determinan qué tareas puede atender el usuario; el permiso general se aplica tanto a Workflow como a Catálogo:
 
 | Permiso | Alcance |
 | --- | --- |
 | Lectura | Consultar, filtrar y descargar información; no puede guardar, importar, crear, modificar, eliminar ni avanzar tareas. |
 | Escritura | Operaciones de Lectura y cambios de datos, conforme a los roles de Workflow. |
-| Total | Operaciones de Escritura y administración del portal para quien además tenga el rol Administrador; reservado para permisos especiales futuros. |
+| Administrador | Operaciones de Escritura y acceso a la sección Admin; reservado para permisos especiales futuros. |
 
-Al migrar, los usuarios existentes conservan **Escritura** y los que tienen rol Administrador reciben **Total**. Los usuarios nuevos reciben el permiso elegido al crearlos. Todos los usuarios autenticados y activos pueden consultar Catálogo. Los permisos de secciones se definen en `config/settings.py`; los cambios de permiso, rol o estado se aplican en el siguiente ciclo de la sesión.
+Todos los usuarios autenticados y activos ven Workflow y Catálogo. Solo el permiso **Administrador** muestra la sección Admin, separada de Workflow. Los roles de proceso siguen determinando qué tareas puede atender cada usuario; pueden dejarse vacíos. El antiguo rol de proceso Administrador no se asigna a usuarios: el permiso Administrador permite atender los nodos que aún lo usan internamente. Los usuarios que tenían **Total** o el rol Administrador se migran al permiso **Administrador**. Los cambios de permiso, rol o estado se aplican en el siguiente ciclo de la sesión.
 
 El código de Catálogo integrado vive en `catalogo/`, basado en el commit `9240797` de `C:\Catalogo`. A partir de esta integración, modifique esa carpeta para los cambios que deban aparecer en el portal; el repositorio independiente `C:\Catalogo` no se sincroniza automáticamente. Las migraciones de su Supabase están en `catalogo/supabase/migrations/`. Las bases de datos permanecen separadas.

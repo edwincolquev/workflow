@@ -154,15 +154,26 @@ def init_db():
     import models
     Base.metadata.create_all(bind=engine)
 
-    # Existing accounts retain write access; administrators receive Total.
+    # Existing accounts retain write access; legacy administrators keep admin access.
     from sqlalchemy import inspect, text
     if "access_level" not in {column["name"] for column in inspect(engine).get_columns("wf_user")}:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE wf_user ADD COLUMN access_level VARCHAR(20) NOT NULL DEFAULT 'Escritura'"))
-            conn.execute(text("""UPDATE wf_user SET access_level = 'Total'
+            conn.execute(text("""UPDATE wf_user SET access_level = 'Administrador'
                 WHERE id IN (SELECT ur.user_id FROM wf_user_role ur
                              JOIN wf_role r ON r.id = ur.role_id
                              WHERE r.name = 'Administrador')"""))
+
+    # Administrador is now a permission, not a user-assigned process role.
+    # Keep the role itself because workflow nodes still reference it.
+    with engine.begin() as conn:
+        conn.execute(text("""UPDATE wf_user SET access_level = 'Administrador'
+            WHERE access_level = 'Total' OR id IN (
+                SELECT ur.user_id FROM wf_user_role ur
+                JOIN wf_role r ON r.id = ur.role_id
+                WHERE r.name = 'Administrador')"""))
+        conn.execute(text("""DELETE FROM wf_user_role WHERE role_id IN (
+            SELECT id FROM wf_role WHERE name = 'Administrador')"""))
     
     # Auto-migrations for DB columns
     migrations = [

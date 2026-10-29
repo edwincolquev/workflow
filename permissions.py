@@ -2,8 +2,8 @@
 
 LECTURA = "Lectura"
 ESCRITURA = "Escritura"
-TOTAL = "Total"
-ACCESS_LEVELS = (LECTURA, ESCRITURA, TOTAL)
+ADMINISTRADOR = "Administrador"
+ACCESS_LEVELS = (LECTURA, ESCRITURA, ADMINISTRADOR)
 
 
 def access_level(user):
@@ -14,11 +14,22 @@ def access_level(user):
 
 
 def can_write(user):
-    return access_level(user) in (ESCRITURA, TOTAL)
+    return access_level(user) in (ESCRITURA, ADMINISTRADOR)
 
 
 def can_manage(user):
-    return access_level(user) == TOTAL
+    return access_level(user) == ADMINISTRADOR
+
+
+def effective_role_ids(db, user):
+    """Include the legacy workflow Administrator task role via permission."""
+    role_ids = {role.id for role in user.roles}
+    if can_manage({"access_level": user.access_level}):
+        from models import WorkflowRole
+        admin_role = db.query(WorkflowRole).filter(WorkflowRole.name == ADMINISTRADOR).first()
+        if admin_role:
+            role_ids.add(admin_role.id)
+    return role_ids
 
 
 def current_user():

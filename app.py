@@ -5,9 +5,9 @@ from database import get_db, init_db
 from models import WorkflowUser, WorkflowTask, WorkflowNode, WorkflowTransition, WorkflowHistory
 from components.ui_helpers import UIHelpers
 from config.settings import has_access
-from permissions import can_write
+from permissions import can_write, effective_role_ids
 
-ROLE_PRIORITY = ("Administrador", "Gerencia", "Compras", "Importaciones", "Logística")
+ROLE_PRIORITY = ("Gerencia", "Compras", "Importaciones", "Logística")
 
 
 def _session_user_info(user):
@@ -149,7 +149,7 @@ if "token" in st.query_params:
                 st.error("Usuario inactivo o sin permiso de Escritura para procesar tareas.")
                 st.stop()
                 
-            user_role_ids = [r.id for r in user.roles]
+            user_role_ids = effective_role_ids(db, user)
             current_role_id = task.node.role_id if task.node.role_id is not None else task.assigned_role_id
             if current_role_id not in user_role_ids:
                 st.error("❌ No tienes el rol requerido para procesar esta transición.")
@@ -535,14 +535,13 @@ else:
         workflow_pages.append(st.Page("pages/01_dashboard.py", title="Dashboard", icon="📊", default=True))
     if has_access(st.session_state.user, "bandeja"):
         workflow_pages.append(st.Page("pages/02_bandeja.py", title="Bandeja", icon="📥"))
-    if has_access(st.session_state.user, "admin"):
-        workflow_pages.append(st.Page("pages/04_admin.py", title="Admin", icon="⚙️"))
-
     sections = {}
     if workflow_pages:
         sections["Workflow"] = workflow_pages
     if has_access(st.session_state.user, "catalogo"):
         sections["Catálogo"] = [st.Page("catalogo/app.py", title="Repuestos", icon="📦")]
+    if has_access(st.session_state.user, "admin"):
+        sections["Administración"] = [st.Page("pages/04_admin.py", title="Admin", icon="⚙️")]
 
     if not sections:
         st.error("Su cuenta no tiene secciones asignadas. Contacte al administrador.")

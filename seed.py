@@ -40,12 +40,12 @@ def seed_data():
                     username=username,
                     email=email,
                     password_hash=hash_password(password),
-                    access_level="Total" if role_name == "Administrador" else "Escritura",
+                    access_level="Administrador" if role_name == "Administrador" else "Escritura",
                     full_name=full_name,
                     active=True
                 )
-                user.roles.append(roles_dict[role_name])
-                # Grant Administrador also to user admin
+                if role_name != "Administrador":
+                    user.roles.append(roles_dict[role_name])
                 db.add(user)
         
         # 3. Seeding Process 1: Importaciones

@@ -82,6 +82,7 @@ with get_db() as db:
     all_users = db.query(WorkflowUser).all()
     
     role_map = {r.id: r.name for r in all_roles}
+    user_role_map = {role_id: name for role_id, name in role_map.items() if name != 'Administrador'}
 
     # ==========================================
     # TAB 1: MATRIZ DE TRANSICIONES
@@ -502,7 +503,7 @@ with get_db() as db:
                 'Usuario': u.username,
                 'Nombre Completo': u.full_name,
                 'Correo Electrónico': u.email or "Sin correo",
-                'Roles Asignados': roles_str,
+                'Roles de Proceso': roles_str,
                 'Permiso': u.access_level,
                 'Estado': "Activo" if u.active else "Inactivo"
             })
@@ -523,15 +524,16 @@ with get_db() as db:
                     new_email = st.text_input("Correo Electrónico", placeholder="juan.perez@empresa.com")
                 with col_u2:
                     new_pass = st.text_input("Contraseña", type="password", placeholder="Contraseña segura")
-                    selected_role_ids = st.multiselect("Roles Asignados", options=list(role_map.keys()), format_func=lambda x: role_map[x], key="new_user_roles_sel")
+                    selected_role_ids = st.multiselect("Roles de Proceso", options=list(user_role_map),
+                                                       format_func=user_role_map.get, key="new_user_roles_sel")
                     new_access_level = st.selectbox("Permiso general", ACCESS_LEVELS,
                                                     index=ACCESS_LEVELS.index(ESCRITURA), key="new_user_access",
-                                                    help="Lectura consulta; Escritura modifica; Total habilita Administración si también tiene el rol Administrador.")
+                                                    help="Lectura consulta; Escritura modifica; Administrador habilita Admin.")
                 
                 user_submit = st.form_submit_button("Crear Usuario")
                 if user_submit:
-                    if not new_username.strip() or not new_fullname.strip() or not new_pass.strip() or not selected_role_ids:
-                        st.error("El nombre de usuario, nombre completo, contraseña y al menos un rol son requeridos.")
+                    if not new_username.strip() or not new_fullname.strip() or not new_pass.strip():
+                        st.error("El nombre de usuario, nombre completo y contraseña son requeridos.")
                     else:
                         existing = db.query(WorkflowUser).filter(WorkflowUser.username == new_username.strip()).first()
                         if existing:
@@ -546,7 +548,9 @@ with get_db() as db:
                                 access_level=new_access_level,
                                 active=True
                             )
-                            roles_to_assign = db.query(WorkflowRole).filter(WorkflowRole.id.in_(selected_role_ids)).all()
+                            roles_to_assign = db.query(WorkflowRole).filter(
+                                WorkflowRole.id.in_(selected_role_ids), WorkflowRole.name != 'Administrador'
+                            ).all()
                             for r in roles_to_assign:
                                 new_u.roles.append(r)
                             db.add(new_u)
@@ -572,24 +576,24 @@ with get_db() as db:
                         eu_email = st.text_input("Correo Electrónico", value=edit_user.email or "")
                         eu_active = st.checkbox("Usuario Activo", value=edit_user.active)
                     with col_ue2:
-                        current_role_ids = [r.id for r in edit_user.roles]
+                        current_role_ids = [r.id for r in edit_user.roles if r.name != 'Administrador']
                         eu_role_ids = st.multiselect(
-                            "Roles Asignados", 
-                            options=list(role_map.keys()), 
+                            "Roles de Proceso",
+                            options=list(user_role_map),
                             default=current_role_ids,
-                            format_func=lambda x: role_map[x],
+                            format_func=user_role_map.get,
                             key=f"edit_roles_{edit_user.id}"
                         )
                         eu_access_level = st.selectbox(
                             "Permiso general", ACCESS_LEVELS,
                             index=ACCESS_LEVELS.index(edit_user.access_level),
                             key=f"edit_access_{edit_user.id}",
-                            help="Total y rol Administrador son necesarios para administrar usuarios."
+                            help="Administrador habilita la sección Admin sin asignar un rol de proceso."
                         )
                         
                     if st.form_submit_button("Actualizar Usuario"):
-                        if not eu_fullname.strip() or not eu_role_ids:
-                            st.error("El nombre completo y al menos un rol son requeridos.")
+                        if not eu_fullname.strip():
+                            st.error("El nombre completo es requerido.")
                         else:
                             edit_user.full_name = eu_fullname.strip()
                             edit_user.email = eu_email.strip() if eu_email.strip() else None
@@ -597,7 +601,9 @@ with get_db() as db:
                             edit_user.access_level = eu_access_level
                             
                             # Update roles association
-                            roles_to_assign = db.query(WorkflowRole).filter(WorkflowRole.id.in_(eu_role_ids)).all()
+                            roles_to_assign = db.query(WorkflowRole).filter(
+                                WorkflowRole.id.in_(eu_role_ids), WorkflowRole.name != 'Administrador'
+                            ).all()
                             edit_user.roles = []
                             for r in roles_to_assign:
                                 edit_user.roles.append(r)

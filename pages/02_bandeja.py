@@ -15,7 +15,7 @@ from components.ui_helpers import UIHelpers
 from components.comments import CommentsComponent
 from components.attachments import AttachmentsComponent
 from config.settings import has_access
-from permissions import can_write
+from permissions import can_manage, can_write, effective_role_ids
 from engine import WorkflowEngine
 
 # 1. Access Control
@@ -114,7 +114,7 @@ t_tasks, t_active, t_new, t_completed = st.tabs([
 # Get user from DB
 with get_db() as db:
     user = db.query(WorkflowUser).filter(WorkflowUser.id == st.session_state.user['id']).first()
-    user_role_ids = [role.id for role in user.roles] if user else []
+    user_role_ids = effective_role_ids(db, user) if user else set()
 
     # ==========================================
     # TAB 1: MIS TAREAS PENDIENTES
@@ -1006,7 +1006,7 @@ with get_db() as db:
                         st.markdown("</div>", unsafe_allow_html=True)
 
                 # Admin / Manager: Cancel Workflow
-                if st.session_state.user['role'] in ['Administrador', 'Gerencia']:
+                if can_manage(st.session_state.user) or 'Gerencia' in st.session_state.user.get('roles', []):
                     with st.expander("⚠️ Opciones Avanzadas (Administración)"):
                         st.markdown("<p style='color: #ef4444;'><b>Cancelar Instancia de Workflow</b></p>", unsafe_allow_html=True)
                         cancel_reason = st.text_input("Motivo de cancelación (Requerido):", placeholder="Ej. Orden de compra cancelada en SAP.", disabled=READ_ONLY)
@@ -1029,7 +1029,7 @@ with get_db() as db:
                 elif instance.status == 'CANCELLED':
                     st.error("Este proceso fue CANCELADO.")
 
-                if st.session_state.user['role'] in ['Administrador', 'Gerencia']:
+                if can_manage(st.session_state.user) or 'Gerencia' in st.session_state.user.get('roles', []):
                     with st.expander("🛠️ Reabrir Proceso Cerrado"):
                         reopen_reason = st.text_area("Motivo de la reapertura (Requerido):", placeholder="Detalla por qué es necesario reabrir este flujo...", disabled=READ_ONLY)
                         if st.button("Confirmar Reapertura", key="reopen_confirm", disabled=READ_ONLY):

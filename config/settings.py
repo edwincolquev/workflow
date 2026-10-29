@@ -1,6 +1,5 @@
 # System roles
 ROLES = [
-    'Administrador',
     'Gerencia',
     'Compras',
     'Importaciones',
@@ -44,14 +43,13 @@ ROLE_ACCESS = {
 
 
 def has_access(user, section):
-    """Use all roles assigned to a Workflow user for page authorization."""
+    """All active accounts see modules; Administrador permission sees Admin."""
     if not user:
         return False
-    if section == 'catalogo':
+    if section in ('catalogo', 'dashboard', 'bandeja'):
         return True
-    roles = user.get('roles') or ([user['role']] if user.get('role') else [])
-    allowed = any(ROLE_ACCESS.get(role, {}).get(section, False) for role in roles)
     if section == 'admin':
         from permissions import can_manage
-        return allowed and can_manage(user)
-    return allowed
+        return can_manage(user)
+    roles = user.get('roles') or ([user['role']] if user.get('role') else [])
+    return any(ROLE_ACCESS.get(role, {}).get(section, False) for role in roles)

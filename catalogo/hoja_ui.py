@@ -9,19 +9,12 @@ from permissions import can_write
 from catalogo.database import fetch_all
 from catalogo.gestion import ESTADOS, NUMERICOS
 from catalogo.hoja_trabajo import (
-    CAMPOS_EDITABLES, aplicar_edicion, cambios_hoja, filas_para_editor,
+    CAMPOS_EDITABLES, LABELS, aplicar_edicion, cambios_hoja, filas_para_editor,
     guardar_cambios_hoja, valor_celda,
 )
+from catalogo.plantilla_hoja import importar_plantilla_hoja, plantilla_hoja_bytes, revisar_plantilla_hoja
 
 STATE_KEY = "hoja_trabajo"
-LABELS = {
-    "codigo_proveedor": "Código proveedor", "codigo_sap": "Código SAP", "descripcion": "Descripción",
-    "medida": "Medida", "nombre_marca": "Marca comercial", "unidad": "Unidad", "categoria": "Categoría",
-    "estado_gestion": "Estado", "minimo_compra": "Mínimo compra", "precio_compra": "Compra (USD)",
-    "precio_venta": "Venta (USD)", "cantidad_compra": "Cantidad compra", "activo": "Activo",
-}
-
-
 def hay_cambios_hoja():
     state = st.session_state.get(STATE_KEY)
     return bool(state and cambios_hoja(state["originales"], state["borrador"]))
@@ -80,6 +73,46 @@ def mostrar_hoja(rows, scope, total):
         st.success(flash)
     st.subheader("Hoja de trabajo")
     st.caption(f"{len(state['borrador'])} de {total} repuestos mostrados con estos filtros.")
+    with st.expander("Edición masiva con Excel"):
+        st.write("Descargue todos los repuestos, edite las celdas y agregue filas al final con el ID vacío. "
+                 "Mantenga los encabezados y los códigos como texto para conservar ceros iniciales. "
+                 "Las filas omitidas no se eliminan; las filas sin cambios no se guardan.")
+        if st.button("Preparar plantilla Excel", key="hoja_preparar_excel"):
+            st.session_state["hoja_plantilla_excel"] = plantilla_hoja_bytes()
+        if st.session_state.get("hoja_plantilla_excel"):
+            st.download_button("Descargar plantilla Excel", data=st.session_state["hoja_plantilla_excel"],
+                               file_name="repuestos_hoja_trabajo.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               key="hoja_descargar_excel")
+        uploaded = st.file_uploader("Importar plantilla editada", type=["xlsx"],
+                                    disabled=read_only or hay_cambios_hoja(), key="hoja_importar_excel")
+        if uploaded:
+            content = uploaded.getvalue()
+            try:
+                updates, inserts = revisar_plantilla_hoja(content)
+                st.info(f"Se prepararán {len(updates)} modificaciones y {len(inserts)} repuestos nuevos.")
+                preview = [dict(fila=number, accion="Modificar", id=part_id,
+                                codigo_proveedor=code,
+                                campos=", ".join(LABELS[field] for field in fields))
+                           for number, part_id, fields, code in updates]
+                preview += [dict(fila=number, accion="Agregar", id=None,
+                                 codigo_proveedor=data["codigo_proveedor"], campos="Nuevo repuesto")
+                            for number, data in inserts]
+                if preview:
+                    st.dataframe(preview, hide_index=True, width="stretch")
+                if st.button("Aplicar cambios del Excel", type="primary",
+                             disabled=read_only or hay_cambios_hoja() or not preview):
+                    modified, created = importar_plantilla_hoja(content)
+                    st.session_state.pop(STATE_KEY, None)
+                    st.session_state.pop("hoja_plantilla_excel", None)
+                    st.session_state["hoja_mensaje"] = (
+                        f"Plantilla importada: {modified} modificados y {created} nuevos."
+                    )
+                    st.rerun()
+            except Exception as error:
+                st.error(f"No se aplicó la plantilla: {error}")
+        if hay_cambios_hoja():
+            st.caption("Guarde o descarte los cambios pendientes de la hoja antes de importar Excel.")
     if not state["borrador"]:
         st.info("No hay repuestos para los filtros elegidos.")
         return []

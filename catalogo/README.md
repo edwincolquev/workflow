@@ -2,6 +2,12 @@
 
 Este paquete se ejecuta desde el `app.py` de la raíz de Workflow y comparte su inicio de sesión. Use `CATALOGO_DATABASE_URL` en los secretos de Streamlit para conectar el proyecto Supabase de Catálogo. No ejecute `catalogo/app.py` como aplicación independiente dentro de este repositorio. La información histórica siguiente documenta el proyecto de origen.
 
+## Edición masiva de repuestos
+
+En **Catálogo > Hoja de trabajo > Edición masiva con Excel**, descargue la plantilla con todos los repuestos. La hoja visible tiene una fila por repuesto y encabezados simples; la hoja interna `Originales` permite detectar cambios hechos por otra sesión. Edite las filas existentes sin cambiar el ID o agregue filas al final dejando el ID vacío. El código de proveedor es obligatorio y único. Puede vaciar celdas de filas existentes para borrar valores opcionales; quitar una fila del archivo no elimina el repuesto.
+
+Al importar, la aplicación muestra las modificaciones y altas previstas. **Aplicar cambios del Excel** vuelve a validar los datos y guarda todo en una sola transacción; si una fila falla, no se guarda ninguna. Se respetan las transiciones de estado, el cierre comercial En SAP y la pertenencia de categorías a sus marcas. Los usuarios con permiso Lectura pueden descargar, pero no importar.
+
 # Catalogo inteligente de repuestos
 
 Aplicación Streamlit para administrar repuestos, importar maestros y generar descripciones con Supabase/PostgreSQL o SQLite local. Las tablas y sus campos usan nombres en español. Incluye clasificación por unidad, marca comercial y categoría, y seguimiento desde Propuesto hasta En SAP, con precios en USD.

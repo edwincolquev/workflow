@@ -12,6 +12,12 @@ CAMPOS_EDITABLES = (
     "estado_gestion", "minimo_compra", "precio_compra", "precio_venta", "cantidad_compra", "activo",
 )
 CAMPOS_REPETIBLES = tuple(field for field in CAMPOS_EDITABLES if field not in ("codigo_proveedor", "codigo_sap"))
+LABELS = {
+    "codigo_proveedor": "Código proveedor", "codigo_sap": "Código SAP", "descripcion": "Descripción",
+    "medida": "Medida", "nombre_marca": "Marca comercial", "unidad": "Unidad", "categoria": "Categoría",
+    "estado_gestion": "Estado", "minimo_compra": "Mínimo compra", "precio_compra": "Compra (USD)",
+    "precio_venta": "Venta (USD)", "cantidad_compra": "Cantidad compra", "activo": "Activo",
+}
 
 
 def valor_celda(value):

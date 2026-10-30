@@ -144,7 +144,7 @@ Esquema SQLite en español desde el 24 de octubre de 2026. Incluye trece tablas 
 ## Importación y conservación de datos
 
 - `repuestos.codigo_proveedor` identifica un repuesto en todo el catálogo. Los encabezados anteriores, como `parts.supplier_code`, siguen aceptándose.
-- Un maestro en español puede usar `REPUESTOS` en la primera fila y nombres como `repuestos.codigo_proveedor`, `codigos_oem.codigo_oem` o `aplicaciones_repuestos.anio_desde` en la segunda. La primera fila también admite el encabezado anterior `PARTS`.
+- Un maestro en español puede usar `REPUESTOS` en la primera fila y nombres cortos como `codigo_proveedor` o `imagen` en la segunda. La primera fila determina la tabla cuando se repite un campo como `nombre` o `descripcion`. Los encabezados completos anteriores (`repuestos.codigo_proveedor`, etc.) y el grupo `PARTS` siguen admitiéndose.
 - No se requieren los campos `repuesto_id` en el CSV: se resuelven a partir del código de proveedor. Se conservan las reglas para no duplicar OEM, referencias ni aplicaciones.
 - Los campos informados actualizan el repuesto; las celdas vacías conservan el valor guardado. Los OEM y las referencias nuevos se agregan.
 - Las cargas preparadas con la versión anterior se pueden revisar y confirmar. Su JSON histórico se conserva y se interpreta al leerlo.

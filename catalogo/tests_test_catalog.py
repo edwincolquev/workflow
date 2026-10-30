@@ -1,6 +1,7 @@
 import csv
 import io
 import pandas as pd
+from openpyxl import Workbook
 
 from catalogo.database import get_connection, initialize_database
 from catalogo.descriptions import format_application_rows, generate_application_summary, refresh_long_description
@@ -58,6 +59,9 @@ def test_filtered_master_export_includes_related_data_and_can_be_reimported(tmp_
 
     empty = list(csv.reader(io.StringIO(plantilla_maestro_bytes().decode("utf-8-sig")), delimiter=";"))
     assert len(empty) == 2
+    assert empty[0][:7] == ["REPUESTOS"] * 4 + ["UNIDADES_MEDIDA", "MARCAS_REPUESTOS", "CATEGORIAS_REPUESTOS"]
+    assert empty[1][:7] == ["codigo_proveedor", "codigo_sap", "descripcion", "medida", "nombre", "nombre", "nombre"]
+    assert empty[1][-1] == "imagen"
     filtered = list(csv.reader(io.StringIO(plantilla_maestro_bytes(
         incluir_datos=True, marca_id=brand_id, estado="propuesto", db_path=path
     ).decode("utf-8-sig")), delimiter=";"))
@@ -129,7 +133,7 @@ def test_master_imports_optional_image_link_from_csv_and_excel(tmp_path):
 
     exported = list(csv.reader(io.StringIO(plantilla_maestro_bytes(
         incluir_datos=True, db_path=path).decode("utf-8-sig")), delimiter=";"))
-    image_column = exported[1].index("repuestos.imagen")
+    image_column = exported[1].index("imagen")
     assert [row[image_column] for row in exported[2:]] == ["https://example.com/nueva.png", ""]
 
 
@@ -157,6 +161,35 @@ def test_master_reader_omits_old_commercial_columns(tmp_path):
     dataframe = read_source(source_path)
     assert list(dataframe.columns) == ["repuestos.codigo_proveedor", "repuestos.descripcion"]
     assert dataframe.attrs["first_data_row"] == 3
+
+
+def test_short_master_headers_keep_repeated_names_distinct_in_csv_and_excel(tmp_path):
+    groups = ["REPUESTOS", "UNIDADES_MEDIDA", "MARCAS_REPUESTOS", "CATEGORIAS_REPUESTOS", "TIPOS_MOTOR"]
+    fields = ["codigo_proveedor", "nombre", "nombre", "nombre", "descripcion"]
+    values = ["P-1", "Pieza", "MARCA A", "FRENOS", "Motor"]
+    csv_path = tmp_path / "maestro.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as output:
+        writer = csv.writer(output, delimiter=";")
+        writer.writerows((groups, fields, values))
+    excel_path = tmp_path / "maestro.xlsx"
+    book = Workbook()
+    sheet = book.active
+    for row in (groups, fields, values):
+        sheet.append(row)
+    book.save(excel_path)
+    for source in (csv_path, excel_path):
+        frame = read_source(source)
+        assert list(frame.columns) == ["repuestos.codigo_proveedor", "unidades_medida.nombre",
+                                       "marcas_repuestos.nombre", "categorias_repuestos.nombre",
+                                       "tipos_motor.descripcion"]
+        assert frame.iloc[0].tolist() == values
+        path = tmp_path / f"{source.suffix[1:]}.sqlite3"
+        initialize_database(path)
+        batch = stage_dataframe(frame, source.name, db_path=path)
+        assert confirm_batch(batch, db_path=path) == (1, 0)
+        with get_connection(path) as connection:
+            part = connection.execute("SELECT unidad, nombre_marca, categoria FROM vista_repuestos WHERE codigo_proveedor = 'P-1'").fetchone()
+            assert tuple(part) == ("Pieza", "MARCA A", "FRENOS")
 
 
 def test_master_is_idempotent_and_updates_only_informed_fields(tmp_path):

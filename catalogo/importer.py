@@ -40,7 +40,7 @@ def plantilla_maestro_bytes(*, incluir_datos=False, marca_id=None, estado=None,
     output = io.StringIO(newline="")
     writer = csv.writer(output, delimiter=";")
     writer.writerow([column.split(".")[0].upper() for column in MAESTRO_COLUMNS])
-    writer.writerow(MAESTRO_COLUMNS)
+    writer.writerow([column.split(".", 1)[1] for column in MAESTRO_COLUMNS])
     if incluir_datos:
         conditions, params = [], []
         if marca_id == -1:
@@ -198,6 +198,16 @@ def read_source(path: str | Path, nombre_hoja: str | int = 0) -> pd.DataFrame:
         dataframe = pd.read_excel(source, header=1 if master else 0, **options)
     else:
         raise ValueError("Formato no soportado. Use CSV o Excel.")
+    if master:
+        tables = {column.split(".", 1)[0] for column in MAESTRO_COLUMNS}
+        columns = []
+        for group, column in zip(first.columns, dataframe.columns):
+            table = re.sub(r"\.\d+$", "", str(group).strip()).lower()
+            field = str(column).strip()
+            if table in tables and re.fullmatch(r"[^.]+\.\d+", field):
+                field = re.sub(r"\.\d+$", "", field)
+            columns.append(f"{table}.{field}" if table in tables and "." not in field else str(column))
+        dataframe.columns = columns
     ignored_aliases = set().union(*(COLUMN_ALIASES[field] for field in MAESTRO_CAMPOS_EXCLUIDOS))
     ignored_columns = [column for column in dataframe.columns
                        if normalize_column(column) in ignored_aliases]

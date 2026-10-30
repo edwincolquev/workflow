@@ -29,6 +29,7 @@ Esquema SQLite en español desde el 24 de octubre de 2026. Incluye trece tablas 
 | `supplier_code` | `codigo_proveedor` | TEXT |  |
 | `description` | `descripcion` | TEXT |  |
 | `measure` | `medida` | TEXT |  |
+| Nuevo | `imagen` | TEXT | URL HTTP o HTTPS opcional de la foto referencial. |
 | `brand_name` / `nombre_marca` | `marca_id` | INTEGER | `marcas_repuestos.id`; nombre disponible en `vista_repuestos.nombre_marca`. |
 | Nuevo | `unidad_id` | INTEGER | `unidades_medida.id` |
 | Nuevo | `categoria_id` | INTEGER | `categorias_repuestos.id`; debe corresponder a `marca_id`. |

@@ -94,6 +94,58 @@ def test_import_reads_semicolon_csv(tmp_path):
     assert dataframe.iloc[0]["Codigo SAP"] == "SAP-003"
 
 
+def test_master_imports_optional_image_link_from_csv_and_excel(tmp_path):
+    path = tmp_path / "catalogo.sqlite3"
+    initialize_database(path)
+    source = tmp_path / "scraping.csv"
+    source.write_text(
+        "REPUESTOS;REPUESTOS\n"
+        "repuestos.codigo_proveedor;repuestos.imagen\n"
+        "P-1;https://example.com/filtro.jpg\n"
+        "P-2;\n", encoding="utf-8",
+    )
+    batch = stage_dataframe(read_source(source), source.name, db_path=path)
+    assert confirm_batch(batch, db_path=path) == (2, 0)
+    with get_connection(path) as connection:
+        assert connection.execute("SELECT imagen FROM repuestos WHERE codigo_proveedor = 'P-1'").fetchone()[0] == "https://example.com/filtro.jpg"
+        assert connection.execute("SELECT imagen FROM repuestos WHERE codigo_proveedor = 'P-2'").fetchone()[0] is None
+
+    excel = tmp_path / "actualizacion.xlsx"
+    pd.DataFrame([{"Codigo proveedor": "P-1", "URL imagen": "https://example.com/nueva.png"},
+                  {"Codigo proveedor": "P-2", "URL imagen": "sin-enlace"}]).to_excel(excel, index=False)
+    batch = stage_dataframe(read_source(excel), excel.name, db_path=path)
+    with get_connection(path) as connection:
+        assert connection.execute("SELECT filas_validas, filas_error FROM lotes_importacion WHERE id = ?", (batch,)).fetchone()[:] == (1, 1)
+    assert confirm_batch(batch, db_path=path) == (0, 1)
+    with get_connection(path) as connection:
+        assert connection.execute("SELECT imagen FROM repuestos WHERE codigo_proveedor = 'P-1'").fetchone()[0] == "https://example.com/nueva.png"
+        assert connection.execute("SELECT imagen FROM repuestos WHERE codigo_proveedor = 'P-2'").fetchone()[0] is None
+
+    blank_update = pd.DataFrame([{"Codigo proveedor": "P-1", "Imagen": ""}])
+    batch = stage_dataframe(blank_update, "sin_imagen.csv", db_path=path)
+    assert confirm_batch(batch, db_path=path) == (0, 0)
+    with get_connection(path) as connection:
+        assert connection.execute("SELECT imagen FROM repuestos WHERE codigo_proveedor = 'P-1'").fetchone()[0] == "https://example.com/nueva.png"
+
+    exported = list(csv.reader(io.StringIO(plantilla_maestro_bytes(
+        incluir_datos=True, db_path=path).decode("utf-8-sig")), delimiter=";"))
+    image_column = exported[1].index("repuestos.imagen")
+    assert [row[image_column] for row in exported[2:]] == ["https://example.com/nueva.png", ""]
+
+
+def test_existing_sqlite_catalog_adds_optional_image_column(tmp_path):
+    path = tmp_path / "catalogo.sqlite3"
+    initialize_database(path)
+    with get_connection(path) as connection:
+        guardar_repuesto(connection, {"codigo_proveedor": "P-1"})
+        connection.execute("DROP VIEW vista_repuestos")
+        connection.execute("ALTER TABLE repuestos DROP COLUMN imagen")
+    initialize_database(path)
+    with get_connection(path) as connection:
+        part = connection.execute("SELECT imagen FROM vista_repuestos WHERE codigo_proveedor = 'P-1'").fetchone()
+        assert part["imagen"] is None
+
+
 def test_master_reader_omits_old_commercial_columns(tmp_path):
     source_path = tmp_path / "maestro_antiguo.csv"
     source_path.write_text(

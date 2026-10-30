@@ -4,6 +4,7 @@ from decimal import Decimal, InvalidOperation
 import math
 import sqlite3
 import unicodedata
+from urllib.parse import urlsplit
 
 ESTADOS = {
     "propuesto": "Propuesto",
@@ -15,6 +16,16 @@ ESTADOS = {
     "en_sap": "En SAP",
 }
 NUMERICOS = ("minimo_compra", "precio_compra", "precio_venta", "cantidad_compra")
+
+
+def validar_imagen(value):
+    if value is None or not str(value).strip():
+        return None
+    url = str(value).strip()
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc or any(char.isspace() for char in url):
+        raise ValueError("Imagen debe ser un enlace web HTTP o HTTPS válido")
+    return url
 
 
 def normalizar_estado(value):
@@ -95,6 +106,8 @@ def guardar_repuesto(connection: sqlite3.Connection, data: dict, repuesto_id=Non
         if field in data:
             values[field] = str(data[field]).strip() if data[field] is not None else None
             values[field] = values[field] or None
+    if "imagen" in data:
+        values["imagen"] = validar_imagen(data["imagen"])
     if "activo" in data:
         values["activo"] = bool(data["activo"])
     for field in NUMERICOS:

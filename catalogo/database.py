@@ -235,10 +235,12 @@ def initialize_database(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         columns = {item[1] for item in connection.execute("PRAGMA table_info(repuestos)")}
         if "fecha_actualizacion_estado" not in columns:
             connection.execute("ALTER TABLE repuestos ADD COLUMN fecha_actualizacion_estado TEXT")
+        if "imagen" not in columns:
+            connection.execute("ALTER TABLE repuestos ADD COLUMN imagen TEXT")
         for name in ("repuestos_estado_inicial", "repuestos_transicion_estado", "repuestos_comercial_cerrado"):
             connection.execute(f"DROP TRIGGER IF EXISTS {name}")
         view = connection.execute("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'vista_repuestos'").fetchone()
-        if view and "r.fecha_actualizacion_estado" not in view[0]:
+        if view and ("r.fecha_actualizacion_estado" not in view[0] or "r.imagen" not in view[0]):
             connection.execute("DROP VIEW vista_repuestos")
         connection.executescript((BASE_DIR / "schema_gestion.sql").read_text(encoding="utf-8"))
         connection.execute("""UPDATE repuestos SET fecha_actualizacion_estado = coalesce((

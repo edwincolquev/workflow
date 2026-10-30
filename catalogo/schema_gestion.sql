@@ -33,7 +33,7 @@ SELECT r.id, r.codigo_proveedor, r.codigo_sap, r.descripcion, r.medida,
        r.unidad_id, r.marca_id, r.categoria_id, r.estado_gestion,
        r.minimo_compra, r.precio_compra, r.precio_venta, r.cantidad_compra,
        u.nombre AS unidad, m.nombre AS nombre_marca, c.nombre AS categoria,
-       r.fecha_actualizacion_estado
+       r.fecha_actualizacion_estado, r.imagen
 FROM repuestos r
 LEFT JOIN unidades_medida u ON u.id = r.unidad_id
 LEFT JOIN marcas_repuestos m ON m.id = r.marca_id

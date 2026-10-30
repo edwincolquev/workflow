@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS repuestos (
     codigo_proveedor TEXT,
     descripcion TEXT,
     medida TEXT,
+    imagen TEXT,
     unidad_id INTEGER REFERENCES unidades_medida(id) ON DELETE RESTRICT,
     marca_id INTEGER REFERENCES marcas_repuestos(id) ON DELETE RESTRICT,
     categoria_id INTEGER REFERENCES categorias_repuestos(id) ON DELETE RESTRICT,

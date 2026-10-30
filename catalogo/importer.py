@@ -15,7 +15,7 @@ import pandas as pd
 from catalogo.database import DEFAULT_DB_PATH, get_connection
 from catalogo.descriptions import refresh_long_description
 from catalogo.schema_names import IMPORT_KEY_RENAMES, normalize_import_data
-from catalogo.gestion import guardar_repuesto
+from catalogo.gestion import guardar_repuesto, validar_imagen
 
 
 MAESTRO_COLUMNS = [
@@ -26,6 +26,7 @@ MAESTRO_COLUMNS = [
         "marcas_vehiculos.nombre", "modelos_vehiculos.nombre", "tipos_motor.codigo", "tipos_motor.descripcion",
         "aplicaciones_repuestos.cilindrada", "aplicaciones_repuestos.anio_desde",
         "aplicaciones_repuestos.anio_hasta", "aplicaciones_repuestos.texto_aplicacion",
+        "repuestos.imagen",
 ]
 MAESTRO_CAMPOS_CLASIFICACION = ("unidad", "nombre_marca", "categoria")
 MAESTRO_CAMPOS_EXCLUIDOS = frozenset((
@@ -103,6 +104,7 @@ def plantilla_maestro_bytes(*, incluir_datos=False, marca_id=None, estado=None,
                                reference["tipo_referencia"] if reference else "",
                                reference["codigo_referencia"] if reference else ""]
                             + [application[field] if application else "" for field in application_fields]
+                            + [part["imagen"] or ""]
                         )
     return output.getvalue().encode("utf-8-sig")
 
@@ -130,6 +132,7 @@ SPANISH_COLUMN_ALIASES = {
     "codigo_sap": {"repuestos_codigo_sap"},
     "descripcion": {"repuestos_descripcion"},
     "medida": {"repuestos_medida"},
+    "imagen": {"repuestos_imagen", "imagen_url", "url_imagen", "foto", "foto_url", "image", "image_url", "parts_image_url"},
     "nombre_marca": {"repuestos_nombre_marca"},
     "codigo_oem": {"codigos_oem_codigo_oem"},
     "tipo_referencia": {"referencias_cruzadas_tipo_referencia"},
@@ -150,6 +153,7 @@ COLUMN_ALIASES = {
     for target, aliases in COLUMN_ALIASES.items()
 }
 COLUMN_ALIASES["nombre_marca"].add("marcas_repuestos_nombre")
+COLUMN_ALIASES["imagen"] = SPANISH_COLUMN_ALIASES["imagen"] | {"imagen"}
 for field, aliases in {
     "unidad": {"unidad_medida", "unidades_medida_nombre", "repuestos_unidad"},
     "categoria": {"categorias_repuestos_nombre", "repuestos_categoria"},
@@ -289,6 +293,11 @@ def stage_dataframe(dataframe: pd.DataFrame, nombre_archivo: str, nombre_hoja: s
         errores = []
         if not data.get("codigo_proveedor") and not data.get("codigo_sap"):
             errores.append("Falta código de proveedor o SAP")
+        if data.get("imagen"):
+            try:
+                data["imagen"] = validar_imagen(data["imagen"])
+            except ValueError as error:
+                errores.append(str(error))
         if data.get("codigo_referencia") and not data.get("tipo_referencia"):
             if master:
                 errores.append("La referencia necesita tipo_referencia")

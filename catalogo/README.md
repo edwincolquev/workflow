@@ -37,6 +37,8 @@ La versión local usa SQLite y Streamlit para importar, revisar y administrar el
 
 Los archivos de datos se guardan en `data/catalogo.sqlite3`. También se acepta la plantilla sencilla [plantilla_importacion.csv](plantilla_importacion.csv), con una fila por repuesto. Varios OEM o referencias pueden separarse con coma, punto y coma o `|`. En **Importar**, los filtros de marca y estado permiten descargar el maestro con los repuestos coincidentes y sus OEM, referencias y aplicaciones; también se puede descargar la plantilla vacía.
 
+El maestro admite `repuestos.imagen`, una URL HTTP o HTTPS opcional de la foto referencial obtenida durante el scraping. También se reconocen encabezados como `imagen`, `url_imagen` e `image_url`. Si un repuesto nuevo no tiene URL, el campo queda vacío; una celda vacía en una actualización conserva la URL existente.
+
 ## Maestro con dos encabezados
 
 La aplicación reconoce [maestro_catalogo v2.csv](maestro_catalogo%20v2.csv): la primera fila agrupa tablas y la segunda contiene los nombres de campos. Las filas repetidas de `repuestos.codigo_proveedor` (o el encabezado anterior `parts.supplier_code`) consolidan un mismo repuesto. También se admiten repuestos identificados solo por código SAP. El código de proveedor es único en el catálogo; SAP y descripción pueden completarse después. Una celda vacía conserva el valor existente y una celda no vacía lo reemplaza. El CSV no necesita los identificadores de las relaciones: el importador localiza el repuesto por su código de proveedor o SAP. Los OEM y las referencias nuevos se agregan al mismo repuesto; los códigos ya existentes no se duplican. Para eliminar o corregir un OEM o referencia existente se usa la edición en Streamlit.

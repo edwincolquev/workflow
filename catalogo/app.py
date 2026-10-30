@@ -125,6 +125,7 @@ with catalog_tab:
             sap_edit = cols[1].text_input("Código SAP", value=part["codigo_sap"] or "", disabled=READ_ONLY)
             description_edit = st.text_input("Descripción", value=part["descripcion"] or "", disabled=READ_ONLY)
             measure_edit = st.text_input("Medida", value=part["medida"] or "", disabled=READ_ONLY)
+            image_edit = st.text_input("Imagen (URL)", value=part["imagen"] or "", disabled=READ_ONLY)
             active_edit = st.checkbox("Activo", value=bool(part["activo"]), disabled=READ_ONLY)
             save_part = st.form_submit_button("Guardar cambios", type="primary", disabled=READ_ONLY)
         if save_part:
@@ -135,6 +136,7 @@ with catalog_tab:
                     with get_connection() as connection:
                         guardar_repuesto(connection, dict(codigo_proveedor=supplier_edit, codigo_sap=sap_edit,
                                                          descripcion=description_edit, medida=measure_edit,
+                                                         imagen=image_edit,
                                                          activo=active_edit), repuesto_id)
                         refresh_long_description(connection, repuesto_id)
                     st.success("Repuesto actualizado.")
@@ -143,6 +145,8 @@ with catalog_tab:
                     st.error(f"No fue posible actualizar: {error}")
 
         mostrar_gestion(part)
+        if part["imagen"]:
+            st.link_button("Abrir imagen referencial", part["imagen"])
         with get_connection(autocommit=True) as connection:
             descripcion_generada = generate_long_description(connection, repuesto_id)
             application_summary = generate_application_summary(connection, repuesto_id)
@@ -398,7 +402,7 @@ with import_tab:
                         (repuesto_id,),
                     )
                     existing_by_supplier[supplier_key] = (
-                        {key: current[0][key] for key in ("codigo_proveedor", "codigo_sap", "descripcion", "medida", *MAESTRO_CAMPOS_CLASIFICACION)},
+                        {key: current[0][key] for key in ("codigo_proveedor", "codigo_sap", "descripcion", "medida", "imagen", *MAESTRO_CAMPOS_CLASIFICACION)},
                         ", ".join(item["codigo_oem"] for item in oem_codes),
                         ", ".join(f"{item['tipo_referencia']}: {item['codigo_referencia']}" for item in references),
                     )
@@ -408,6 +412,7 @@ with import_tab:
             review.append(dict(fila=row["numero_fila"], estado=row["estado"], avisos=row["errores"],
                                proveedor=supplier, sap_nuevo=data.get("codigo_sap"),
                                descripcion_nueva=data.get("descripcion"),
+                               imagen_nueva=data.get("imagen"),
                                existente=existing,
                                oem_nuevo=data.get("codigo_oem"), oem_existentes=existing_oem,
                                referencia_nueva=(f"{data.get('tipo_referencia')}: {data.get('codigo_referencia')}"

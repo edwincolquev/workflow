@@ -1,13 +1,14 @@
 """Hoja editable con selección y repetición de celdas en Streamlit."""
 
 from copy import deepcopy
+from html import escape
 
 import pandas as pd
 import streamlit as st
 from permissions import can_write
 
 from catalogo.database import fetch_all
-from catalogo.gestion import ESTADOS, NUMERICOS
+from catalogo.gestion import ESTADOS, NUMERICOS, validar_imagen
 from catalogo.hoja_trabajo import (
     CAMPOS_EDITABLES, LABELS, aplicar_edicion, cambios_hoja, filas_para_editor,
     guardar_cambios_hoja, valor_celda,
@@ -18,6 +19,37 @@ STATE_KEY = "hoja_trabajo"
 def hay_cambios_hoja():
     state = st.session_state.get(STATE_KEY)
     return bool(state and cambios_hoja(state["originales"], state["borrador"]))
+
+
+def _mostrar_vistas_imagen(rows):
+    links = []
+    for row in rows:
+        try:
+            url = validar_imagen(row.get("imagen"))
+        except ValueError:
+            continue
+        if not url:
+            continue
+        label = escape(str(row.get("codigo_proveedor") or row.get("codigo_sap") or row["id"]))
+        safe_url = escape(url, quote=True)
+        links.append(
+            f'<span class="catalogo-imagen">'
+            f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">🖼 {label}</a>'
+            f'<span class="catalogo-imagen-preview"><img src="{safe_url}" alt="Foto referencial de {label}"></span>'
+            f'</span>'
+        )
+    if not links:
+        return
+    st.html(
+        """<style>
+        .catalogo-imagenes {display:flex; flex-wrap:wrap; gap:8px; padding:8px 0 14px;}
+        .catalogo-imagen {position:relative; display:inline-block; padding:4px 9px; border:1px solid #8ba5b7; border-radius:6px;}
+        .catalogo-imagen-preview {display:none; position:absolute; left:0; bottom:calc(100% + 6px); z-index:1000;
+            padding:6px; background:white; border:1px solid #8ba5b7; border-radius:6px; box-shadow:0 4px 14px #0003;}
+        .catalogo-imagen:hover .catalogo-imagen-preview {display:block;}
+        .catalogo-imagen-preview img {display:block; max-width:300px; max-height:240px; object-fit:contain;}
+        </style><div class="catalogo-imagenes">""" + "".join(links) + "</div>"
+    )
 
 
 def _renovar_editor(state):
@@ -169,7 +201,8 @@ def mostrar_hoja(rows, scope, total):
     st.data_editor(data, hide_index=True, width="stretch", height=min(580, 38 + 35 * len(data)),
                    num_rows="fixed", column_config=config, disabled=disabled, key=state["editor_key"],
                    on_change=_al_editar, args=(state["editor_key"],))
-    st.caption("Vista muestra la foto referencial y se amplía con doble clic. Las fechas se muestran como día/mes/año hora:minuto (Bolivia): Última actualización registra cambios del repuesto o su descripción; Último cambio de estado registra cuándo cambió el estado de gestión.")
+    st.caption("Vista muestra la foto y se amplía con doble clic. Pase el mouse sobre un icono de abajo para previsualizarla. Las fechas se muestran como día/mes/año hora:minuto (Bolivia): Última actualización registra cambios del repuesto o su descripción; Último cambio de estado registra cuándo cambió el estado de gestión.")
+    _mostrar_vistas_imagen(state["borrador"])
     st.caption(f"{selected_count} filas seleccionadas. Edite una celda de una fila marcada para copiar su valor a las demás marcadas. Los códigos proveedor y SAP se editan individualmente.")
     for notice in state["avisos"]:
         st.warning(notice)

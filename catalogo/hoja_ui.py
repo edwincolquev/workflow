@@ -167,13 +167,9 @@ def mostrar_hoja(rows, scope, total):
     st.data_editor(data, hide_index=True, width="stretch", height=min(580, 38 + 35 * len(data)),
                    num_rows="fixed", column_config=config, disabled=disabled, key=state["editor_key"],
                    on_change=_al_editar, args=(state["editor_key"],))
-    st.caption("Las fechas se muestran como día/mes/año hora:minuto (Bolivia): Última actualización registra cambios del repuesto o su descripción; Último cambio de estado registra cuándo cambió el estado de gestión.")
-    st.caption(f"{selected_count} filas seleccionadas. Edite una celda de una fila marcada para copiar su valor a las demás marcadas. Los códigos proveedor y SAP se editan individualmente.")
     for notice in state["avisos"]:
         st.warning(notice)
-    st.caption("Las categorías deben pertenecer a la marca de cada fila. Al cambiar la marca se limpia su categoría. El estado puede cambiar libremente; los importes En SAP se corrigen mediante Excel.")
     changes = cambios_hoja(state["originales"], state["borrador"])
-    st.caption(f"{len(changes)} repuestos con cambios pendientes. Guarde o descarte para volver a cambiar los filtros.")
     if changes:
         originals = {row["id"]: row for row in state["originales"]}
         with st.expander("Revisar cambios pendientes"):

@@ -1,14 +1,13 @@
 """Hoja editable con selección y repetición de celdas en Streamlit."""
 
 from copy import deepcopy
-from html import escape
 
 import pandas as pd
 import streamlit as st
 from permissions import can_write
 
 from catalogo.database import fetch_all
-from catalogo.gestion import ESTADOS, NUMERICOS, validar_imagen
+from catalogo.gestion import ESTADOS, NUMERICOS
 from catalogo.hoja_trabajo import (
     CAMPOS_EDITABLES, LABELS, aplicar_edicion, cambios_hoja, filas_para_editor,
     guardar_cambios_hoja, valor_celda,
@@ -19,37 +18,6 @@ STATE_KEY = "hoja_trabajo"
 def hay_cambios_hoja():
     state = st.session_state.get(STATE_KEY)
     return bool(state and cambios_hoja(state["originales"], state["borrador"]))
-
-
-def _mostrar_vistas_imagen(rows):
-    links = []
-    for row in rows:
-        try:
-            url = validar_imagen(row.get("imagen"))
-        except ValueError:
-            continue
-        if not url:
-            continue
-        label = escape(str(row.get("codigo_proveedor") or row.get("codigo_sap") or row["id"]))
-        safe_url = escape(url, quote=True)
-        links.append(
-            f'<span class="catalogo-imagen">'
-            f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">🖼 {label}</a>'
-            f'<span class="catalogo-imagen-preview"><img src="{safe_url}" alt="Foto referencial de {label}"></span>'
-            f'</span>'
-        )
-    if not links:
-        return
-    st.html(
-        """<style>
-        .catalogo-imagenes {display:flex; flex-wrap:wrap; gap:8px; padding:8px 0 14px;}
-        .catalogo-imagen {position:relative; display:inline-block; padding:4px 9px; border:1px solid #8ba5b7; border-radius:6px;}
-        .catalogo-imagen-preview {display:none; position:absolute; left:0; bottom:calc(100% + 6px); z-index:1000;
-            padding:6px; background:white; border:1px solid #8ba5b7; border-radius:6px; box-shadow:0 4px 14px #0003;}
-        .catalogo-imagen:hover .catalogo-imagen-preview {display:block;}
-        .catalogo-imagen-preview img {display:block; max-width:300px; max-height:240px; object-fit:contain;}
-        </style><div class="catalogo-imagenes">""" + "".join(links) + "</div>"
-    )
 
 
 def _renovar_editor(state):
@@ -168,7 +136,6 @@ def mostrar_hoja(rows, scope, total):
         on_change=_seleccionar_todas,
     )
     data = pd.DataFrame(state["entrada"])
-    data.insert(data.columns.get_loc("imagen"), "vista_imagen", data["imagen"].fillna(""))
     for field in NUMERICOS:
         data[field] = pd.to_numeric(data[field], errors="raise").astype(float)
     for field in CAMPOS_EDITABLES:
@@ -183,7 +150,6 @@ def mostrar_hoja(rows, scope, total):
     config["id"] = st.column_config.NumberColumn("ID", disabled=True)
     config["activo"] = st.column_config.CheckboxColumn("Activo")
     config["estado_gestion"] = st.column_config.SelectboxColumn("Estado", options=list(ESTADOS.values()), required=True, width="medium")
-    config["vista_imagen"] = st.column_config.ImageColumn("Vista", width="small", help="Foto referencial; haga doble clic en la miniatura para ampliarla.")
     config["imagen"] = st.column_config.LinkColumn("Imagen (URL)", width="medium", help="Enlace web de la foto referencial; se puede editar o abrir.")
     config["fecha_actualizacion"] = st.column_config.TextColumn("Última actualización", disabled=True, width="medium", help="Fecha y hora de la última modificación del repuesto o de su descripción, en hora de Bolivia.")
     config["fecha_actualizacion_estado"] = st.column_config.TextColumn("Último cambio de estado", disabled=True, width="medium", help="Fecha y hora en que cambió el estado de gestión por última vez, en hora de Bolivia.")
@@ -193,7 +159,7 @@ def mostrar_hoja(rows, scope, total):
         options = {row["nombre"] for row in fetch_all(f"SELECT nombre FROM {table}")}
         options.update(row[field] for row in state["borrador"] if row[field])
         config[field] = st.column_config.SelectboxColumn(LABELS[field], options=sorted(options), width="medium")
-    disabled = ["id", "vista_imagen", "fecha_actualizacion", "fecha_actualizacion_estado", "_index"]
+    disabled = ["id", "fecha_actualizacion", "fecha_actualizacion_estado", "_index"]
     if read_only:
         disabled.extend(CAMPOS_EDITABLES)
     if all(row["estado_gestion"] == "en_sap" for row in state["originales"]):
@@ -201,8 +167,7 @@ def mostrar_hoja(rows, scope, total):
     st.data_editor(data, hide_index=True, width="stretch", height=min(580, 38 + 35 * len(data)),
                    num_rows="fixed", column_config=config, disabled=disabled, key=state["editor_key"],
                    on_change=_al_editar, args=(state["editor_key"],))
-    st.caption("Vista muestra la foto y se amplía con doble clic. Pase el mouse sobre un icono de abajo para previsualizarla. Las fechas se muestran como día/mes/año hora:minuto (Bolivia): Última actualización registra cambios del repuesto o su descripción; Último cambio de estado registra cuándo cambió el estado de gestión.")
-    _mostrar_vistas_imagen(state["borrador"])
+    st.caption("Las fechas se muestran como día/mes/año hora:minuto (Bolivia): Última actualización registra cambios del repuesto o su descripción; Último cambio de estado registra cuándo cambió el estado de gestión.")
     st.caption(f"{selected_count} filas seleccionadas. Edite una celda de una fila marcada para copiar su valor a las demás marcadas. Los códigos proveedor y SAP se editan individualmente.")
     for notice in state["avisos"]:
         st.warning(notice)

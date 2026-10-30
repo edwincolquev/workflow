@@ -11,6 +11,7 @@ from catalogo.descriptions import generate_application_summary, generate_long_de
 from catalogo.importer import (MAESTRO_CAMPOS_CLASIFICACION, MAESTRO_CAMPOS_EXCLUIDOS,
                                confirm_batch, plantilla_maestro_bytes, read_source, save_application, stage_dataframe)
 from catalogo.schema_names import normalize_import_data
+from catalogo.resumen import totales_por_marca
 from catalogo.gestion import ESTADOS, guardar_repuesto
 from catalogo.gestion_ui import administrar_clasificacion, campos_clasificacion, campos_comerciales, mostrar_gestion
 from catalogo.hoja_ui import hay_cambios_hoja, mostrar_hoja
@@ -38,14 +39,7 @@ if READ_ONLY:
 st.caption("Repuestos, aplicaciones, importación y descripciones · Base: " +
            ("Supabase" if using_postgres() else "SQLite local"))
 
-counts = fetch_all("""SELECT
-    (SELECT COUNT(*) FROM repuestos) AS repuestos,
-    (SELECT COUNT(*) FROM aplicaciones_repuestos) AS applications,
-    (SELECT COUNT(*) FROM lotes_importacion) AS batches""")[0]
-columns = st.columns(3)
-columns[0].metric("Repuestos", counts["repuestos"])
-columns[1].metric("Aplicaciones", counts["applications"])
-columns[2].metric("Cargas", counts["batches"])
+summary_container = st.container()
 
 catalog_tab, import_tab, batches_tab, classification_tab = st.tabs(["Catálogo", "Importar", "Cargas", "Clasificación"])
 
@@ -57,6 +51,13 @@ with catalog_tab:
                                            format_func=lambda value: "Todas las marcas" if value is None else (
                                                "Sin marca" if value == -1 else brands[value]),
                                            disabled=pending_sheet, key="filtro_marca")
+    counts = totales_por_marca(brand_filter)
+    metric_columns = summary_container.columns(6)
+    for column, label, field in zip(metric_columns,
+                                    ("Repuestos", "Propuestos", "Procesando", "Rechazados", "Pedido", "En SAP"),
+                                    ("repuestos", "propuestos", "procesando", "rechazados", "pedido", "en_sap")):
+        column.metric(label, counts[field], help=("En cotización + Pendiente de aprobación + Aprobado"
+                                                  if field == "procesando" else None))
     state_filter = filter_cols[1].selectbox("Filtrar por estado", [None, *ESTADOS],
                                            format_func=lambda value: ESTADOS.get(value, "Todos"), disabled=pending_sheet)
     row_limit = filter_cols[2].selectbox("Filas a mostrar", [200, 500, 1000, None],

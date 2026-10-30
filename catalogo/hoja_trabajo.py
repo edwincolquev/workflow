@@ -1,7 +1,9 @@
 """Edición de la hoja y guardado transaccional de varios repuestos."""
 
 from copy import deepcopy
+from datetime import datetime, timezone
 import math
+from zoneinfo import ZoneInfo
 
 from catalogo.database import DEFAULT_DB_PATH, get_connection
 from catalogo.descriptions import refresh_long_description
@@ -9,7 +11,7 @@ from catalogo.gestion import ESTADOS, guardar_repuesto, normalizar_estado
 
 CAMPOS_EDITABLES = (
     "codigo_proveedor", "codigo_sap", "descripcion", "medida", "nombre_marca", "unidad", "categoria",
-    "estado_gestion", "minimo_compra", "precio_compra", "precio_venta", "cantidad_compra", "activo",
+    "estado_gestion", "minimo_compra", "precio_compra", "precio_venta", "cantidad_compra", "activo", "imagen",
 )
 CAMPOS_REPETIBLES = tuple(field for field in CAMPOS_EDITABLES if field not in ("codigo_proveedor", "codigo_sap"))
 LABELS = {
@@ -17,7 +19,18 @@ LABELS = {
     "medida": "Medida", "nombre_marca": "Marca comercial", "unidad": "Unidad", "categoria": "Categoría",
     "estado_gestion": "Estado", "minimo_compra": "Mínimo compra", "precio_compra": "Compra (USD)",
     "precio_venta": "Venta (USD)", "cantidad_compra": "Cantidad compra", "activo": "Activo",
+    "imagen": "Imagen (URL)",
 }
+
+
+def formatear_fecha(value):
+    """Muestra las marcas de tiempo de la base en hora de Bolivia."""
+    if value is None or value == "":
+        return ""
+    date = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if date.tzinfo is None:
+        date = date.replace(tzinfo=timezone.utc)
+    return date.astimezone(ZoneInfo("America/La_Paz")).strftime("%d/%m/%Y %H:%M")
 
 
 def valor_celda(value):
@@ -40,8 +53,8 @@ def filas_para_editor(rows, selected=()):
         field: ESTADOS[row[field]] if field == "estado_gestion" else (
             bool(row[field]) if field == "activo" else row[field]
         ) for field in CAMPOS_EDITABLES
-    }, fecha_actualizacion=row["fecha_actualizacion"],
-        fecha_actualizacion_estado=row["fecha_actualizacion_estado"]) for row in rows]
+    }, fecha_actualizacion=formatear_fecha(row["fecha_actualizacion"]),
+        fecha_actualizacion_estado=formatear_fecha(row["fecha_actualizacion_estado"])) for row in rows]
 
 
 def cambios_hoja(originales, editadas):

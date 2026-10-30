@@ -64,6 +64,32 @@ def test_excel_updates_and_adds_without_touching_unchanged_rows(tmp_path):
     assert rows[0][3] == "Actualizada"
 
 
+def test_excel_image_link_round_trip_and_legacy_template(tmp_path):
+    path = _catalogo(tmp_path)
+    content = plantilla_hoja_bytes(path)
+    book = load_workbook(BytesIO(content))
+    assert book["Repuestos"]["O1"].value == "Imagen (URL)"
+    assert book["Repuestos"]["P1"].value == "Fecha cambio de estado"
+    book["Repuestos"]["O2"] = "https://example.com/repuesto.jpg"
+    output = BytesIO()
+    book.save(output)
+    assert importar_plantilla_hoja(output.getvalue(), path) == (1, 0)
+    with get_connection(path) as connection:
+        assert connection.execute("SELECT imagen FROM repuestos WHERE codigo_proveedor = '001'").fetchone()[0] == "https://example.com/repuesto.jpg"
+
+    legacy = load_workbook(BytesIO(plantilla_hoja_bytes(path)))
+    for name in ("Repuestos", "Originales"):
+        legacy[name].delete_cols(15)
+    legacy["Repuestos"]["D2"] = "Editado desde plantilla anterior"
+    output = BytesIO()
+    legacy.save(output)
+    assert importar_plantilla_hoja(output.getvalue(), path) == (1, 0)
+    with get_connection(path) as connection:
+        part = connection.execute("SELECT descripcion, imagen FROM repuestos WHERE codigo_proveedor = '001'").fetchone()
+        assert part["descripcion"] == "Editado desde plantilla anterior"
+        assert part["imagen"] == "https://example.com/repuesto.jpg"
+
+
 def test_excel_conflict_cancels_entire_import(tmp_path):
     path = _catalogo(tmp_path)
     content = _edit(plantilla_hoja_bytes(path), lambda sheet: (

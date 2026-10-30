@@ -3,6 +3,7 @@ from copy import deepcopy
 from catalogo.database import get_connection, initialize_database
 from catalogo.gestion import guardar_repuesto
 from catalogo.hoja_trabajo import aplicar_edicion, cambios_hoja, filas_para_editor, guardar_cambios_hoja
+from catalogo.hoja_trabajo import formatear_fecha
 
 
 def _datos(tmp_path):
@@ -14,6 +15,11 @@ def _datos(tmp_path):
                                              categoria="FRENOS", precio_compra=2, descripcion="Inicial"))
         rows = [dict(row) for row in connection.execute("SELECT * FROM vista_repuestos ORDER BY id DESC")]
     return path, rows
+
+
+def test_sheet_dates_are_readable_in_bolivia_time():
+    assert formatear_fecha("2026-10-30 16:45:00") == "30/10/2026 12:45"
+    assert formatear_fecha("2026-10-30T16:45:00+00:00") == "30/10/2026 12:45"
 
 
 def test_repetition_changes_only_selected_rows_and_not_unique_codes(tmp_path):

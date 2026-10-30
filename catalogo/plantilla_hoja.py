@@ -9,13 +9,16 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.utils import get_column_letter
 
 from catalogo.database import DEFAULT_DB_PATH, get_connection
 from catalogo.descriptions import refresh_long_description
-from catalogo.gestion import ESTADOS, NUMERICOS, guardar_repuesto, numero_gestion, normalizar_estado
+from catalogo.gestion import ESTADOS, NUMERICOS, guardar_repuesto, numero_gestion, normalizar_estado, validar_imagen
 from catalogo.hoja_trabajo import CAMPOS_EDITABLES, LABELS, _validar_listas, valor_comparable
 
 HEADERS = ("ID", *(LABELS[field] for field in CAMPOS_EDITABLES), "Fecha cambio de estado")
+LEGACY_FIELDS = tuple(field for field in CAMPOS_EDITABLES if field != "imagen")
+LEGACY_HEADERS = ("ID", *(LABELS[field] for field in LEGACY_FIELDS), "Fecha cambio de estado")
 BASE_SHEET = "Originales"
 DATA_SHEET = "Repuestos"
 
@@ -36,6 +39,8 @@ def _plain(field, value):
         raise ValueError("Activo debe ser Sí o No")
     if field in NUMERICOS:
         return numero_gestion(field, value)
+    if field == "imagen":
+        return validar_imagen(value)
     if not isinstance(value, (str, int, float)):
         raise ValueError(f"{LABELS[field]} debe ser texto")
     return str(value).strip() or None
@@ -81,10 +86,10 @@ def plantilla_hoja_bytes(db_path: str | Path = DEFAULT_DB_PATH, *, marca_id=None
                     cell.data_type = "s"
     baseline.sheet_state = "hidden"
     sheet.freeze_panes = "C2"
-    sheet.auto_filter.ref = f"A1:O{max(2, sheet.max_row)}"
+    sheet.auto_filter.ref = f"A1:{get_column_letter(len(HEADERS))}{max(2, sheet.max_row)}"
     sheet.sheet_view.showGridLines = False
     sheet.row_dimensions[1].height = 30
-    widths = [10, 22, 18, 45, 22, 24, 18, 22, 25, 18, 18, 18, 20, 12, 23]
+    widths = [10, 22, 18, 45, 22, 24, 18, 22, 25, 18, 18, 18, 20, 12, 45, 27]
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
     for cell in sheet[1]:
@@ -94,7 +99,8 @@ def plantilla_hoja_bytes(db_path: str | Path = DEFAULT_DB_PATH, *, marca_id=None
     sheet["A1"].comment = Comment("No cambie el ID de las filas existentes. Déjelo vacío para agregar un repuesto.", "Catálogo")
     sheet["B1"].comment = Comment("Código obligatorio y único. Las columnas de códigos están formateadas como texto.", "Catálogo")
     sheet["I1"].comment = Comment("Puede elegir cualquier estado, sin seguir una secuencia.", "Catálogo")
-    sheet["O1"].comment = Comment("Fecha del último cambio de estado. La calcula la aplicación; no la edite.", "Catálogo")
+    sheet["O1"].comment = Comment("URL HTTP o HTTPS de la foto referencial. Puede dejarla vacía.", "Catálogo")
+    sheet["P1"].comment = Comment("Fecha del último cambio de estado. La calcula la aplicación; no la edite.", "Catálogo")
     for row in sheet.iter_rows(min_row=2):
         row[0].font = Font(color="666666")
         row[-1].font = Font(color="666666")
@@ -130,11 +136,17 @@ def _read_template(content: bytes):
         raise ValueError("Use la plantilla descargada desde Hoja de trabajo")
     sheet, baseline = book[DATA_SHEET], book[BASE_SHEET]
     headers = tuple(cell.value for cell in sheet[1][:len(HEADERS)])
-    if headers not in (HEADERS, HEADERS[:-1]):
+    variants = {
+        HEADERS: (CAMPOS_EDITABLES, True),
+        HEADERS[:-1]: (CAMPOS_EDITABLES, False),
+        LEGACY_HEADERS: (LEGACY_FIELDS, True),
+        LEGACY_HEADERS[:-1]: (LEGACY_FIELDS, False),
+    }
+    if headers not in variants:
         raise ValueError("Los encabezados de Repuestos fueron modificados")
     if tuple(cell.value for cell in baseline[1][:len(HEADERS)]) != headers:
         raise ValueError("La referencia interna de la plantilla fue modificada")
-    has_state_date = headers == HEADERS
+    template_fields, has_state_date = variants[headers]
 
     originals = {}
     original_dates = {}
@@ -145,7 +157,7 @@ def _read_template(content: bytes):
         if part_id in originals:
             raise ValueError(f"ID {part_id} repetido en la referencia interna")
         originals[part_id] = {field: _plain(field, row[index + 1])
-                              for index, field in enumerate(CAMPOS_EDITABLES)}
+                              for index, field in enumerate(template_fields)}
         if has_state_date:
             original_dates[part_id] = row[-1]
 
@@ -158,7 +170,7 @@ def _read_template(content: bytes):
             raise ValueError(f"Fila {number}: las fórmulas no se admiten")
         try:
             part_id = _id(row[0]) if row[0] is not None else None
-            data = {field: _plain(field, row[index + 1]) for index, field in enumerate(CAMPOS_EDITABLES)}
+            data = {field: _plain(field, row[index + 1]) for index, field in enumerate(template_fields)}
             code = data["codigo_proveedor"]
             if not code:
                 raise ValueError("Código proveedor es obligatorio")
@@ -184,7 +196,7 @@ def _read_template(content: bytes):
                     updates.append((number, part_id, fields, code))
         except ValueError as error:
             raise ValueError(f"Fila {number}: {error}") from error
-    return originals, original_dates, updates, inserts
+    return originals, original_dates, updates, inserts, template_fields
 
 
 def _id(value):
@@ -195,7 +207,7 @@ def _id(value):
 
 def revisar_plantilla_hoja(content: bytes):
     """Devuelve solo las filas que se guardarán; no toca la base."""
-    _, _, updates, inserts = _read_template(content)
+    _, _, updates, inserts, _ = _read_template(content)
     return updates, inserts
 
 
@@ -222,7 +234,7 @@ def _guardar_fila_excel(connection, part_id, current, fields):
 
 def importar_plantilla_hoja(content: bytes, db_path: str | Path = DEFAULT_DB_PATH):
     """Revalida el archivo y aplica todas las altas y ediciones en una transacción."""
-    originals, original_dates, updates, inserts = _read_template(content)
+    originals, original_dates, updates, inserts, template_fields = _read_template(content)
     with get_connection(db_path) as connection:
         connection.execute("BEGIN IMMEDIATE")
         for number, part_id, fields, _code in updates:
@@ -233,7 +245,7 @@ def importar_plantilla_hoja(content: bytes, db_path: str | Path = DEFAULT_DB_PAT
                 if current is None:
                     raise ValueError("el repuesto fue eliminado")
                 if any(valor_comparable(field, current[field]) != valor_comparable(field, originals[part_id][field])
-                       for field in CAMPOS_EDITABLES):
+                       for field in template_fields):
                     raise ValueError("el repuesto cambió desde la descarga; descargue una plantilla nueva")
                 if part_id in original_dates and str(current["fecha_actualizacion_estado"]) != original_dates[part_id]:
                     raise ValueError("el estado cambió desde la descarga; descargue una plantilla nueva")
